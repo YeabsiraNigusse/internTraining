@@ -23,9 +23,13 @@ class LinearClassifier(nn.Module):
         # (batch_size, 1, 28, 28)
 
         # Flatten each image into a vector of length 784.
+        # this will be turned into (batch_size, 784) input size
         x = x.view(x.size(0), -1)
 
         # Compute logits = W x + b
+        # W will be a matrix of (10, 784) and b will be (batch_size, 10)
+
+        #  logits = xW^T + b
         logits = self.linear(x)
 
         return logits
@@ -35,4 +39,6 @@ model = LinearClassifier()
 print(model)
 
 
+# Input --> Output --> Loss
 
+# Loss gradient --> Output gradient --> Weight gradient
