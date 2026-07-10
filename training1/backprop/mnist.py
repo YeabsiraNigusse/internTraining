@@ -84,10 +84,10 @@ print()
 
 image, label = train_dataset[0]
 
-print(f"Image Shape : {image.shape}")
-print(f"Label       : {label}")
+# print(f"Image Shape : {image.shape}")
+# print(f"Label       : {label}")
 
-print()
+# print()
 
 # -------------------------------------------------------
 # First Batch
@@ -95,19 +95,19 @@ print()
 
 images, labels = next(iter(train_loader))
 
-print(f"Batch Images Shape : {images.shape}")
-print(f"Batch Labels Shape : {labels.shape}")
+# print(f"Batch Images Shape : {images.shape}")
+# print(f"Batch Labels Shape : {labels.shape}")
 
-print()
+# print()
 
 # -------------------------------------------------------
 # Visualize First Image
 # -------------------------------------------------------
 
-plt.imshow(images[0].squeeze(), cmap="gray")
-plt.title(f"Label : {labels[0].item()}")
-plt.axis("off")
-plt.show()
+# plt.imshow(images[0].squeeze(), cmap="gray")
+# plt.title(f"Label : {labels[0].item()}")
+# plt.axis("off")
+# plt.show()
 
 
 
@@ -194,15 +194,15 @@ print()
 
 predictions = torch.argmax(outputs, dim=1)
 
-print("Predictions")
-print(predictions)
+# print("Predictions")
+# print(predictions)
 
-print()
+# print()
 
-print("Ground Truth")
-print(labels)
+# print("Ground Truth")
+# print(labels)
 
-print()
+# print()
 
 # -------------------------------------------------------
 # Test Loss
