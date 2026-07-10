@@ -151,9 +151,19 @@ for _ in range(EPOCHS):
 # eps_x = [0.98, 0.06, 0.99, -0.01, -0.03]
 # eps_h = [0.00, 0.00, 0.00]
 
-
+# the sume of thire square will be devided by 5 give the following result 
 # E_x = 0.19451
 # E_h = 0.00000
+
+
+# this comes from 
+# eps_x is 1 by 5
+# W_x is 3 by 5
+
+# so 1 by 5 @ 5 by 3 gives 1 by 3 which is grad_h
+
+
+# grad_from_input_error = -(eps_x @ W_x.T) / image_dim and the eps_h = 0 so total grad will be grad of input error
 
 # grad_h = [-0.0158, -0.0224, 0.0182]
 
