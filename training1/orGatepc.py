@@ -144,9 +144,4 @@ energy = 0.5*(
 # Hidden states become variables
 # -------------------------------------
 
-hidden.requires_grad_(True)
-
-energy.backward()
-
-hidden.grad
 
