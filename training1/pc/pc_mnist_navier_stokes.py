@@ -383,6 +383,7 @@ def make_loaders(
     train_subset: int,
     test_subset: int,
     data_dir: str,
+    num_workers: int,
 ) -> Tuple[DataLoader, DataLoader]:
     transform = transforms.ToTensor()
 
@@ -408,14 +409,14 @@ def make_loaders(
         train_set,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=2,
+        num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
     )
     test_loader = DataLoader(
         test_set,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
     )
     return train_loader, test_loader
@@ -617,12 +618,13 @@ def smoke_test() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="./data")
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--train_subset", type=int, default=10000)
     parser.add_argument("--test_subset", type=int, default=2000)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--num_workers", type=int, default=0)
 
     parser.add_argument("--inference_steps", type=int, default=8)
     parser.add_argument("--hidden_lr", type=float, default=0.25)
@@ -658,6 +660,7 @@ def main() -> None:
         train_subset=args.train_subset,
         test_subset=args.test_subset,
         data_dir=args.data_dir,
+        num_workers=args.num_workers,
     )
 
     model = OneHiddenPCMNIST(hidden_channels=3).to(device)

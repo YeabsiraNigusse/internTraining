@@ -1,0 +1,54 @@
+============================================================
+Standard Backprop MNIST
+============================================================
+Using device: cpu
+Training images used: 10000
+Testing images used : 2000
+MNISTClassifier(
+  (flatten): Flatten(start_dim=1, end_dim=-1)
+  (network): Sequential(
+    (0): Linear(in_features=784, out_features=256, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=256, out_features=128, bias=True)
+    (3): ReLU()
+    (4): Linear(in_features=128, out_features=64, bias=True)
+    (5): ReLU()
+    (6): Linear(in_features=64, out_features=10, bias=True)
+  )
+)
+Total Parameters     : 242762
+Trainable Parameters : 242762
+============================================================
+Starting Training
+============================================================
+Epoch [1/20] | Train Loss: 1.0143 | Train Acc: 70.51% | Test Loss: 0.4284 | Test Acc: 87.15%
+New best model saved (Accuracy: 87.15%)
+Epoch [2/20] | Train Loss: 0.3624 | Train Acc: 89.64% | Test Loss: 0.2966 | Test Acc: 90.75%
+New best model saved (Accuracy: 90.75%)
+Epoch [3/20] | Train Loss: 0.2704 | Train Acc: 91.98% | Test Loss: 0.2607 | Test Acc: 92.25%
+New best model saved (Accuracy: 92.25%)
+Epoch [4/20] | Train Loss: 0.2129 | Train Acc: 93.83% | Test Loss: 0.2343 | Test Acc: 93.25%
+New best model saved (Accuracy: 93.25%)
+Epoch [5/20] | Train Loss: 0.1723 | Train Acc: 94.91% | Test Loss: 0.1977 | Test Acc: 93.95%
+New best model saved (Accuracy: 93.95%)
+Epoch [6/20] | Train Loss: 0.1448 | Train Acc: 95.98% | Test Loss: 0.2034 | Test Acc: 94.30%
+New best model saved (Accuracy: 94.30%)
+Epoch [7/20] | Train Loss: 0.1140 | Train Acc: 96.58% | Test Loss: 0.1931 | Test Acc: 94.30%
+Epoch [8/20] | Train Loss: 0.1014 | Train Acc: 97.08% | Test Loss: 0.1645 | Test Acc: 95.35%
+New best model saved (Accuracy: 95.35%)
+Epoch [9/20] | Train Loss: 0.0817 | Train Acc: 97.76% | Test Loss: 0.1675 | Test Acc: 95.55%
+New best model saved (Accuracy: 95.55%)
+Epoch [10/20] | Train Loss: 0.0763 | Train Acc: 97.82% | Test Loss: 0.1725 | Test Acc: 95.45%
+Epoch [11/20] | Train Loss: 0.0551 | Train Acc: 98.57% | Test Loss: 0.1785 | Test Acc: 95.60%
+New best model saved (Accuracy: 95.60%)
+Epoch [12/20] | Train Loss: 0.0437 | Train Acc: 98.78% | Test Loss: 0.1672 | Test Acc: 95.55%
+Epoch [13/20] | Train Loss: 0.0362 | Train Acc: 99.10% | Test Loss: 0.1748 | Test Acc: 95.25%
+Epoch [14/20] | Train Loss: 0.0309 | Train Acc: 99.21% | Test Loss: 0.1704 | Test Acc: 96.00%
+New best model saved (Accuracy: 96.00%)
+Epoch [15/20] | Train Loss: 0.0233 | Train Acc: 99.39% | Test Loss: 0.1872 | Test Acc: 95.65%
+Epoch [16/20] | Train Loss: 0.0240 | Train Acc: 99.38% | Test Loss: 0.1830 | Test Acc: 96.00%
+Epoch [17/20] | Train Loss: 0.0170 | Train Acc: 99.62% | Test Loss: 0.1886 | Test Acc: 96.00%
+Epoch [18/20] | Train Loss: 0.0142 | Train Acc: 99.71% | Test Loss: 0.1926 | Test Acc: 95.75%
+Epoch [19/20] | Train Loss: 0.0117 | Train Acc: 99.74% | Test Loss: 0.1936 | Test Acc: 96.10%
+New best model saved (Accuracy: 96.10%)
+Epoch [20/20] | Train Loss: 0.0072 | Train Acc: 99.87% | Test Loss: 0.2024 | Test Acc: 95.45%

@@ -1,254 +1,75 @@
+#!/usr/bin/env python3
 """
-train.py
+Standard backprop MNIST baseline.
 
-Part 1
-- Load MNIST
-- Create DataLoaders
-- Inspect the dataset
+This is the ordinary neural-network baseline used by compare_pc_fluid_pc.py.
+It trains MNISTClassifier from model.py with cross-entropy and Adam.
 """
+
+from __future__ import annotations
+
+import argparse
+import random
+from pathlib import Path
 
 import torch
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 from model import MNISTClassifier
-from pathlib import Path
-# -------------------------------------------------------
-# Configuration
-# -------------------------------------------------------
-
-BATCH_SIZE = 64
-
-# -------------------------------------------------------
-# Image Transform
-# -------------------------------------------------------
-
-transform = transforms.Compose([
-    transforms.ToTensor(),
-])
-
-# -------------------------------------------------------
-# Load Training Dataset
-# -------------------------------------------------------
-
-train_dataset = datasets.MNIST(
-    root="./data",
-    train=True,
-    download=True,
-    transform=transform,
-)
-
-# -------------------------------------------------------
-# Load Test Dataset
-# -------------------------------------------------------
-
-test_dataset = datasets.MNIST(
-    root="./data",
-    train=False,
-    download=True,
-    transform=transform,
-)
-
-# -------------------------------------------------------
-# DataLoaders
-# -------------------------------------------------------
-
-train_loader = DataLoader(
-    dataset=train_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=True,
-)
-
-test_loader = DataLoader(
-    dataset=test_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-)
-
-# -------------------------------------------------------
-# Dataset Information
-# -------------------------------------------------------
-
-print("=" * 50)
-print("Dataset Information")
-print("=" * 50)
-
-print(f"Training Images : {len(train_dataset)}")
-print(f"Testing Images  : {len(test_dataset)}")
-
-print()
-
-# -------------------------------------------------------
-# First Sample
-# -------------------------------------------------------
-
-image, label = train_dataset[0]
-
-# print(f"Image Shape : {image.shape}")
-# print(f"Label       : {label}")
-
-# print()
-
-# -------------------------------------------------------
-# First Batch
-# -------------------------------------------------------
-
-images, labels = next(iter(train_loader))
-
-# print(f"Batch Images Shape : {images.shape}")
-# print(f"Batch Labels Shape : {labels.shape}")
-
-# print()
-
-# -------------------------------------------------------
-# Visualize First Image
-# -------------------------------------------------------
-
-# plt.imshow(images[0].squeeze(), cmap="gray")
-# plt.title(f"Label : {labels[0].item()}")
-# plt.axis("off")
-# plt.show()
-
-
-
-# -------------------------------------------------------
-# Device
-# -------------------------------------------------------
-
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
-
-print(f"Using device: {device}")
-
-# -------------------------------------------------------
-# Hyperparameters
-# -------------------------------------------------------
-
-LEARNING_RATE = 0.001
-NUM_EPOCHS = 10
-
-# -------------------------------------------------------
-# Model
-# -------------------------------------------------------
-
-model = MNISTClassifier().to(device)
-
-# -------------------------------------------------------
-# Loss Function
-# -------------------------------------------------------
-
-criterion = torch.nn.CrossEntropyLoss()
-
-# -------------------------------------------------------
-# Optimizer
-# -------------------------------------------------------
-
-optimizer = torch.optim.Adam(
-    model.parameters(),
-    lr=LEARNING_RATE,
-)
-
-# -------------------------------------------------------
-# Model Summary
-# -------------------------------------------------------
-
-print(model)
-
-print()
-
-total_parameters = sum(
-    parameter.numel()
-    for parameter in model.parameters()
-)
-
-trainable_parameters = sum(
-    parameter.numel()
-    for parameter in model.parameters()
-    if parameter.requires_grad
-)
-
-print(f"Total Parameters     : {total_parameters}")
-print(f"Trainable Parameters : {trainable_parameters}")
-
-print()
-
-# -------------------------------------------------------
-# Test Forward Pass
-# -------------------------------------------------------
-
-images, labels = next(iter(train_loader))
-
-images = images.to(device)
-
-outputs = model(images)
-
-print(f"Input Shape  : {images.shape}")
-print(f"Output Shape : {outputs.shape}")
-
-print()
-
-# -------------------------------------------------------
-# Predicted Classes
-# -------------------------------------------------------
-
-predictions = torch.argmax(outputs, dim=1)
-
-# print("Predictions")
-# print(predictions)
-
-# print()
-
-# print("Ground Truth")
-# print(labels)
-
-# print()
-
-# -------------------------------------------------------
-# Test Loss
-# -------------------------------------------------------
-
-loss = criterion(
-    outputs,
-    labels.to(device),
-)
-
-print(f"Initial Loss : {loss.item():.4f}")
-
-
-# ============================================================
-# PART 3
-# Training Loop
-#
-# Append this to train.py
-# ============================================================
-
-
-# ------------------------------------------------------------
-# Training Configuration
-# ------------------------------------------------------------
-
-SAVE_DIR = Path("checkpoints")
-SAVE_DIR.mkdir(exist_ok=True)
-
-best_accuracy = 0.0
-
-train_loss_history = []
-train_accuracy_history = []
-
-test_loss_history = []
-test_accuracy_history = []
-
-# ============================================================
-# Training Function
-# ============================================================
-
-def train_one_epoch(model,
-                    dataloader,
-                    criterion,
-                    optimizer,
-                    device):
-
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
+
+
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def maybe_subset(dataset, subset_size: int, seed: int):
+    if subset_size <= 0 or subset_size >= len(dataset):
+        return dataset
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+    return Subset(dataset, indices)
+
+
+def make_loaders(args: argparse.Namespace):
+    transform = transforms.ToTensor()
+
+    train_dataset = datasets.MNIST(
+        root=args.data_dir,
+        train=True,
+        download=True,
+        transform=transform,
+    )
+    test_dataset = datasets.MNIST(
+        root=args.data_dir,
+        train=False,
+        download=True,
+        transform=transform,
+    )
+
+    train_dataset = maybe_subset(train_dataset, args.train_subset, args.seed)
+    test_dataset = maybe_subset(test_dataset, args.test_subset, args.seed + 1)
+
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+    test_loader = DataLoader(
+        dataset=test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+
+    return train_dataset, test_dataset, train_loader, test_loader
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
 
     running_loss = 0.0
@@ -256,62 +77,24 @@ def train_one_epoch(model,
     total = 0
 
     for images, labels in dataloader:
-
         images = images.to(device)
         labels = labels.to(device)
 
-        # ----------------------------------------
-        # Clear previous gradients
-        # ----------------------------------------
-        optimizer.zero_grad()
-
-        # ----------------------------------------
-        # Forward pass
-        # ----------------------------------------
+        optimizer.zero_grad(set_to_none=True)
         outputs = model(images)
-
-        # ----------------------------------------
-        # Compute loss
-        # ----------------------------------------
         loss = criterion(outputs, labels)
-
-        # ----------------------------------------
-        # Backpropagation
-        # ----------------------------------------
         loss.backward()
-
-        # ----------------------------------------
-        # Update parameters
-        # ----------------------------------------
         optimizer.step()
 
-        # ----------------------------------------
-        # Statistics
-        # ----------------------------------------
         running_loss += loss.item() * images.size(0)
-
-        predictions = outputs.argmax(dim=1)
-
-        correct += (predictions == labels).sum().item()
-
+        correct += (outputs.argmax(dim=1) == labels).sum().item()
         total += labels.size(0)
 
-    epoch_loss = running_loss / total
-    epoch_accuracy = 100.0 * correct / total
+    return running_loss / total, 100.0 * correct / total
 
-    return epoch_loss, epoch_accuracy
-
-
-# ============================================================
-# Evaluation Function
-# ============================================================
 
 @torch.no_grad()
-def evaluate(model,
-             dataloader,
-             criterion,
-             device):
-
+def evaluate(model, dataloader, criterion, device):
     model.eval()
 
     running_loss = 0.0
@@ -319,148 +102,119 @@ def evaluate(model,
     total = 0
 
     for images, labels in dataloader:
-
         images = images.to(device)
         labels = labels.to(device)
 
         outputs = model(images)
-
         loss = criterion(outputs, labels)
 
         running_loss += loss.item() * images.size(0)
-
-        predictions = outputs.argmax(dim=1)
-
-        correct += (predictions == labels).sum().item()
-
+        correct += (outputs.argmax(dim=1) == labels).sum().item()
         total += labels.size(0)
 
-    epoch_loss = running_loss / total
-    epoch_accuracy = 100.0 * correct / total
-
-    return epoch_loss, epoch_accuracy
+    return running_loss / total, 100.0 * correct / total
 
 
-# ============================================================
-# Main Training Loop
-# ============================================================
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Standard backprop MNIST baseline")
+    parser.add_argument("--data_dir", type=str, default="./data")
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--train_subset", type=int, default=0, help="0 means full train set")
+    parser.add_argument("--test_subset", type=int, default=0, help="0 means full test set")
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
+    return parser.parse_args()
 
-print("=" * 60)
-print("Starting Training")
-print("=" * 60)
 
-for epoch in range(NUM_EPOCHS):
+def main() -> None:
+    args = parse_args()
+    set_seed(args.seed)
 
-    train_loss, train_acc = train_one_epoch(
-        model,
-        train_loader,
-        criterion,
-        optimizer,
-        device,
-    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    test_loss, test_acc = evaluate(
-        model,
-        test_loader,
-        criterion,
-        device,
-    )
+    train_dataset, test_dataset, train_loader, test_loader = make_loaders(args)
 
-    train_loss_history.append(train_loss)
-    train_accuracy_history.append(train_acc)
+    print("=" * 60)
+    print("Standard Backprop MNIST")
+    print("=" * 60)
+    print(f"Using device: {device}")
+    print(f"Training images used: {len(train_dataset)}")
+    print(f"Testing images used : {len(test_dataset)}")
 
-    test_loss_history.append(test_loss)
-    test_accuracy_history.append(test_acc)
+    model = MNISTClassifier().to(device)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    print(
-        f"Epoch [{epoch+1}/{NUM_EPOCHS}] "
-        f"| Train Loss: {train_loss:.4f} "
-        f"| Train Acc: {train_acc:.2f}% "
-        f"| Test Loss: {test_loss:.4f} "
-        f"| Test Acc: {test_acc:.2f}%"
-    )
+    total_parameters = sum(parameter.numel() for parameter in model.parameters())
+    trainable_parameters = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    print(model)
+    print(f"Total Parameters     : {total_parameters}")
+    print(f"Trainable Parameters : {trainable_parameters}")
 
-    if test_acc > best_accuracy:
+    save_dir = Path(args.checkpoint_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    best_path = save_dir / "best_model.pth"
+    best_accuracy = -1.0
 
-        best_accuracy = test_acc
+    print("=" * 60)
+    print("Starting Training")
+    print("=" * 60)
 
-        torch.save(
-            model.state_dict(),
-            SAVE_DIR / "best_model.pth",
-        )
+    for epoch in range(1, args.epochs + 1):
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
 
         print(
-            f"New best model saved "
-            f"(Accuracy: {best_accuracy:.2f}%)"
+            f"Epoch [{epoch}/{args.epochs}] "
+            f"| Train Loss: {train_loss:.4f} "
+            f"| Train Acc: {train_acc:.2f}% "
+            f"| Test Loss: {test_loss:.4f} "
+            f"| Test Acc: {test_acc:.2f}%"
         )
 
-print()
+        if test_acc > best_accuracy:
+            best_accuracy = test_acc
+            torch.save(model.state_dict(), best_path)
+            print(f"New best model saved (Accuracy: {best_accuracy:.2f}%)")
 
-print("=" * 60)
-print("Training Finished")
-print("=" * 60)
+    print()
+    print("=" * 60)
+    print("Training Finished")
+    print("=" * 60)
+    print(f"Best Test Accuracy : {best_accuracy:.2f}%")
 
-print(f"Best Test Accuracy : {best_accuracy:.2f}%")
-print()
+    model.load_state_dict(torch.load(best_path, map_location=device))
+    final_loss, final_accuracy = evaluate(model, test_loader, criterion, device)
 
-# ============================================================
-# Load Best Model
-# ============================================================
+    print()
+    print("=" * 60)
+    print("Final Evaluation")
+    print("=" * 60)
+    print(f"Loss     : {final_loss:.4f}")
+    print(f"Accuracy : {final_accuracy:.2f}%")
 
-model.load_state_dict(
-    torch.load(
-        SAVE_DIR / "best_model.pth",
-        map_location=device,
-    )
-)
+    images, labels = next(iter(test_loader))
+    images = images.to(device)
+    labels = labels.to(device)
 
-print("Best model loaded successfully.")
+    model.eval()
+    with torch.no_grad():
+        predictions = model(images).argmax(dim=1)
 
-# ============================================================
-# Final Evaluation
-# ============================================================
+    print("=" * 60)
+    print("Sample Predictions")
+    print("=" * 60)
 
-final_loss, final_accuracy = evaluate(
-    model,
-    test_loader,
-    criterion,
-    device,
-)
-
-print()
-print("=" * 60)
-print("Final Evaluation")
-print("=" * 60)
-
-print(f"Loss     : {final_loss:.4f}")
-print(f"Accuracy : {final_accuracy:.2f}%")
-
-print()
-
-# ============================================================
-# Show Some Predictions
-# ============================================================
-
-model.eval()
-
-images, labels = next(iter(test_loader))
-
-images = images.to(device)
-
-outputs = model(images)
-
-predictions = outputs.argmax(dim=1)
-
-print("=" * 60)
-print("Sample Predictions")
-print("=" * 60)
-
-for i in range(10):
-
-    print(
-        f"Image {i:2d} | "
-        f"Prediction: {predictions[i].item()} | "
-        f"Ground Truth: {labels[i].item()}"
-    )
+    for i in range(min(10, images.size(0))):
+        print(
+            f"Image {i:2d} | "
+            f"Prediction: {predictions[i].item()} | "
+            f"Ground Truth: {labels[i].item()}"
+        )
 
 
+if __name__ == "__main__":
+    main()

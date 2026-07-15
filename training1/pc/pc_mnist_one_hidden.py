@@ -743,7 +743,7 @@ def run_smoke_test(device: torch.device) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="One-hidden-layer PC model on MNIST")
     parser.add_argument("--data_dir", type=str, default="./data")
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--inference_steps", type=int, default=20)

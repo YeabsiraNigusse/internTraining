@@ -1,0 +1,115 @@
+Using device: cpu
+======================================================================
+Dataset Information
+======================================================================
+Training images used: 10000
+Testing images used:  2000
+First image shape:    (1, 28, 28)
+First label:          2
+======================================================================
+One-hidden-layer Predictive Coding MNIST model
+======================================================================
+OneHiddenPC()
+
+Total parameters: 102,544
+
+Shape meaning
+-------------
+MNIST image x:           [B, 1, 28, 28]
+Flattened image x_flat:  [B, 784]
+Label one-hot y:         [B, 10]
+Hidden state h:          [B, 128]
+W_x hidden->image:       [128, 784]
+W_y label->hidden:       [10, 128]
+
+PC equations
+------------
+predicted_input  = h @ W_x + b_x
+predicted_hidden = y_one_hot @ W_y + b_h
+eps_input        = x_flat - predicted_input
+eps_hidden       = h - predicted_hidden
+E_PC             = recon_weight * 0.5 * mean(eps_input^2)
+                 + hidden_weight * 0.5 * mean(eps_hidden^2)
+
+Training difference from backprop
+---------------------------------
+Backprop: x -> network -> logits -> CE loss -> loss.backward() -> optimizer.step()
+PC here:  clamp x and y -> infer h for many steps -> update W_x and W_y from errors
+======================================================================
+Using local PC error-based weight updates with lr=0.02
+
+Initial one-batch free-energy prediction check
+Initial mini free-energy accuracy: 6.25%
+
+======================================================================
+Starting Predictive Coding Training
+======================================================================
+Epoch 01 | Batch 0000/0079 | E=0.09580 | Recon=0.09425 | Hidden=0.00077 | eps_x=0.4342 | eps_h=0.0393 | mini free-energy acc=0.0%
+Epoch 01 | Batch 0050/0079 | E=0.03085 | Recon=0.03066 | Hidden=0.00009 | eps_x=0.2476 | eps_h=0.0138 | mini free-energy acc=81.2%
+Epoch [1/20] | Train E: 0.04292 | Train Recon: 0.04257 | Train Hidden: 0.00018 | Test E: 0.02583 | Test Acc: 82.15%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=82.15%
+Epoch 02 | Batch 0000/0079 | E=0.02730 | Recon=0.02713 | Hidden=0.00008 | eps_x=0.2329 | eps_h=0.0129 | mini free-energy acc=81.2%
+Epoch 02 | Batch 0050/0079 | E=0.02525 | Recon=0.02509 | Hidden=0.00008 | eps_x=0.2240 | eps_h=0.0124 | mini free-energy acc=75.0%
+Epoch [2/20] | Train E: 0.02592 | Train Recon: 0.02576 | Train Hidden: 0.00008 | Test E: 0.02430 | Test Acc: 84.00%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.00%
+Epoch 03 | Batch 0000/0079 | E=0.02476 | Recon=0.02460 | Hidden=0.00008 | eps_x=0.2218 | eps_h=0.0129 | mini free-energy acc=62.5%
+Epoch 03 | Batch 0050/0079 | E=0.02580 | Recon=0.02563 | Hidden=0.00009 | eps_x=0.2264 | eps_h=0.0131 | mini free-energy acc=71.9%
+Epoch [3/20] | Train E: 0.02544 | Train Recon: 0.02527 | Train Hidden: 0.00008 | Test E: 0.02417 | Test Acc: 84.20%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.20%
+Epoch 04 | Batch 0000/0079 | E=0.02501 | Recon=0.02485 | Hidden=0.00008 | eps_x=0.2229 | eps_h=0.0130 | mini free-energy acc=84.4%
+Epoch 04 | Batch 0050/0079 | E=0.02654 | Recon=0.02636 | Hidden=0.00009 | eps_x=0.2296 | eps_h=0.0136 | mini free-energy acc=81.2%
+Epoch [4/20] | Train E: 0.02536 | Train Recon: 0.02519 | Train Hidden: 0.00009 | Test E: 0.02406 | Test Acc: 83.75%
+Epoch 05 | Batch 0000/0079 | E=0.02542 | Recon=0.02523 | Hidden=0.00010 | eps_x=0.2246 | eps_h=0.0139 | mini free-energy acc=81.2%
+Epoch 05 | Batch 0050/0079 | E=0.02550 | Recon=0.02530 | Hidden=0.00010 | eps_x=0.2250 | eps_h=0.0140 | mini free-energy acc=84.4%
+Epoch [5/20] | Train E: 0.02530 | Train Recon: 0.02511 | Train Hidden: 0.00009 | Test E: 0.02401 | Test Acc: 83.70%
+Epoch 06 | Batch 0000/0079 | E=0.02576 | Recon=0.02556 | Hidden=0.00010 | eps_x=0.2261 | eps_h=0.0140 | mini free-energy acc=81.2%
+Epoch 06 | Batch 0050/0079 | E=0.02425 | Recon=0.02406 | Hidden=0.00010 | eps_x=0.2193 | eps_h=0.0139 | mini free-energy acc=78.1%
+Epoch [6/20] | Train E: 0.02523 | Train Recon: 0.02504 | Train Hidden: 0.00010 | Test E: 0.02394 | Test Acc: 84.50%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.50%
+Epoch 07 | Batch 0000/0079 | E=0.02500 | Recon=0.02481 | Hidden=0.00010 | eps_x=0.2228 | eps_h=0.0138 | mini free-energy acc=81.2%
+Epoch 07 | Batch 0050/0079 | E=0.02492 | Recon=0.02471 | Hidden=0.00010 | eps_x=0.2223 | eps_h=0.0142 | mini free-energy acc=87.5%
+Epoch [7/20] | Train E: 0.02516 | Train Recon: 0.02496 | Train Hidden: 0.00010 | Test E: 0.02384 | Test Acc: 84.55%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.55%
+Epoch 08 | Batch 0000/0079 | E=0.02426 | Recon=0.02407 | Hidden=0.00009 | eps_x=0.2194 | eps_h=0.0135 | mini free-energy acc=84.4%
+Epoch 08 | Batch 0050/0079 | E=0.02653 | Recon=0.02630 | Hidden=0.00012 | eps_x=0.2293 | eps_h=0.0152 | mini free-energy acc=68.8%
+Epoch [8/20] | Train E: 0.02508 | Train Recon: 0.02487 | Train Hidden: 0.00011 | Test E: 0.02376 | Test Acc: 83.90%
+Epoch 09 | Batch 0000/0079 | E=0.02462 | Recon=0.02440 | Hidden=0.00011 | eps_x=0.2209 | eps_h=0.0149 | mini free-energy acc=75.0%
+Epoch 09 | Batch 0050/0079 | E=0.02538 | Recon=0.02516 | Hidden=0.00011 | eps_x=0.2243 | eps_h=0.0149 | mini free-energy acc=78.1%
+Epoch [9/20] | Train E: 0.02500 | Train Recon: 0.02478 | Train Hidden: 0.00011 | Test E: 0.02368 | Test Acc: 84.15%
+Epoch 10 | Batch 0000/0079 | E=0.02473 | Recon=0.02451 | Hidden=0.00011 | eps_x=0.2214 | eps_h=0.0148 | mini free-energy acc=87.5%
+Epoch 10 | Batch 0050/0079 | E=0.02407 | Recon=0.02384 | Hidden=0.00012 | eps_x=0.2183 | eps_h=0.0152 | mini free-energy acc=84.4%
+Epoch [10/20] | Train E: 0.02491 | Train Recon: 0.02468 | Train Hidden: 0.00012 | Test E: 0.02360 | Test Acc: 84.50%
+Epoch 11 | Batch 0000/0079 | E=0.02526 | Recon=0.02502 | Hidden=0.00012 | eps_x=0.2237 | eps_h=0.0154 | mini free-energy acc=68.8%
+Epoch 11 | Batch 0050/0079 | E=0.02462 | Recon=0.02438 | Hidden=0.00012 | eps_x=0.2208 | eps_h=0.0155 | mini free-energy acc=81.2%
+Epoch [11/20] | Train E: 0.02481 | Train Recon: 0.02457 | Train Hidden: 0.00012 | Test E: 0.02352 | Test Acc: 84.10%
+Epoch 12 | Batch 0000/0079 | E=0.02356 | Recon=0.02332 | Hidden=0.00012 | eps_x=0.2160 | eps_h=0.0155 | mini free-energy acc=90.6%
+Epoch 12 | Batch 0050/0079 | E=0.02475 | Recon=0.02451 | Hidden=0.00012 | eps_x=0.2214 | eps_h=0.0156 | mini free-energy acc=87.5%
+Epoch [12/20] | Train E: 0.02471 | Train Recon: 0.02445 | Train Hidden: 0.00013 | Test E: 0.02339 | Test Acc: 84.60%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.60%
+Epoch 13 | Batch 0000/0079 | E=0.02515 | Recon=0.02490 | Hidden=0.00012 | eps_x=0.2231 | eps_h=0.0158 | mini free-energy acc=90.6%
+Epoch 13 | Batch 0050/0079 | E=0.02574 | Recon=0.02545 | Hidden=0.00014 | eps_x=0.2256 | eps_h=0.0170 | mini free-energy acc=87.5%
+Epoch [13/20] | Train E: 0.02460 | Train Recon: 0.02433 | Train Hidden: 0.00014 | Test E: 0.02329 | Test Acc: 84.75%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.75%
+Epoch 14 | Batch 0000/0079 | E=0.02473 | Recon=0.02443 | Hidden=0.00015 | eps_x=0.2211 | eps_h=0.0172 | mini free-energy acc=78.1%
+Epoch 14 | Batch 0050/0079 | E=0.02412 | Recon=0.02385 | Hidden=0.00013 | eps_x=0.2184 | eps_h=0.0163 | mini free-energy acc=84.4%
+Epoch [14/20] | Train E: 0.02449 | Train Recon: 0.02420 | Train Hidden: 0.00014 | Test E: 0.02316 | Test Acc: 84.60%
+Epoch 15 | Batch 0000/0079 | E=0.02534 | Recon=0.02503 | Hidden=0.00015 | eps_x=0.2238 | eps_h=0.0175 | mini free-energy acc=81.2%
+Epoch 15 | Batch 0050/0079 | E=0.02355 | Recon=0.02328 | Hidden=0.00014 | eps_x=0.2158 | eps_h=0.0164 | mini free-energy acc=87.5%
+Epoch [15/20] | Train E: 0.02436 | Train Recon: 0.02406 | Train Hidden: 0.00015 | Test E: 0.02302 | Test Acc: 84.55%
+Epoch 16 | Batch 0000/0079 | E=0.02437 | Recon=0.02405 | Hidden=0.00016 | eps_x=0.2193 | eps_h=0.0178 | mini free-energy acc=84.4%
+Epoch 16 | Batch 0050/0079 | E=0.02370 | Recon=0.02338 | Hidden=0.00016 | eps_x=0.2162 | eps_h=0.0178 | mini free-energy acc=87.5%
+Epoch [16/20] | Train E: 0.02424 | Train Recon: 0.02392 | Train Hidden: 0.00016 | Test E: 0.02290 | Test Acc: 84.85%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=84.85%
+Epoch 17 | Batch 0000/0079 | E=0.02398 | Recon=0.02367 | Hidden=0.00016 | eps_x=0.2176 | eps_h=0.0178 | mini free-energy acc=75.0%
+Epoch 17 | Batch 0050/0079 | E=0.02449 | Recon=0.02413 | Hidden=0.00018 | eps_x=0.2197 | eps_h=0.0191 | mini free-energy acc=87.5%
+Epoch [17/20] | Train E: 0.02410 | Train Recon: 0.02377 | Train Hidden: 0.00017 | Test E: 0.02273 | Test Acc: 84.40%
+Epoch 18 | Batch 0000/0079 | E=0.02558 | Recon=0.02523 | Hidden=0.00018 | eps_x=0.2246 | eps_h=0.0189 | mini free-energy acc=84.4%
+Epoch 18 | Batch 0050/0079 | E=0.02341 | Recon=0.02307 | Hidden=0.00017 | eps_x=0.2148 | eps_h=0.0185 | mini free-energy acc=90.6%
+Epoch [18/20] | Train E: 0.02397 | Train Recon: 0.02362 | Train Hidden: 0.00017 | Test E: 0.02263 | Test Acc: 85.00%
+New best PC model saved: training1/pc/comparison_runs/pc_checkpoints/best_pc_one_hidden.pth | Acc=85.00%
+Epoch 19 | Batch 0000/0079 | E=0.02470 | Recon=0.02431 | Hidden=0.00019 | eps_x=0.2205 | eps_h=0.0197 | mini free-energy acc=90.6%
+Epoch 19 | Batch 0050/0079 | E=0.02346 | Recon=0.02309 | Hidden=0.00019 | eps_x=0.2149 | eps_h=0.0194 | mini free-energy acc=81.2%
+Epoch [19/20] | Train E: 0.02382 | Train Recon: 0.02346 | Train Hidden: 0.00018 | Test E: 0.02248 | Test Acc: 84.65%
+Epoch 20 | Batch 0000/0079 | E=0.02427 | Recon=0.02390 | Hidden=0.00018 | eps_x=0.2186 | eps_h=0.0192 | mini free-energy acc=93.8%
+Epoch 20 | Batch 0050/0079 | E=0.02525 | Recon=0.02483 | Hidden=0.00021 | eps_x=0.2228 | eps_h=0.0207 | mini free-energy acc=84.4%
+Epoch [20/20] | Train E: 0.02367 | Train Recon: 0.02329 | Train Hidden: 0.00019 | Test E: 0.02233 | Test Acc: 85.35%

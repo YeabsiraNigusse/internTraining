@@ -1,0 +1,4 @@
+epoch,pc_test_loss,pc_test_acc,fluid_test_loss,fluid_test_acc,fluid_minus_pc_acc
+1,0.02583,82.15,2.3013,10.25,-71.9
+2,0.0243,84.0,2.3009,11.7,-72.3
+3,0.02417,84.2,2.3009,11.7,-72.5
