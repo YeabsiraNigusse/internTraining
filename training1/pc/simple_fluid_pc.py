@@ -44,7 +44,7 @@ LR = 1e-3
 
 def normalize_density(a, eps=1e-8):
     """Keep hidden activation positive and make each image's mass sum to 1."""
-    a = F.softplus(a)
+    a = F.softplus(a) # a smooth version of ReLU, It makes every value positive.
     mass = a.sum(dim=(1, 2, 3), keepdim=True)
     return a / (mass + eps)
 
@@ -149,6 +149,8 @@ PARAMS = [W_pred, b_pred, W_dec, b_dec, W_stream, b_stream, W_cls, b_cls]
 
 
 def predict_density(a, x):
+    # density(a) will be constracted directly from the image
+    
     """Predict what the hidden density should look like locally."""
     raw = F.conv2d(torch.cat([a, x], dim=1), W_pred, b_pred, padding=1)
     return normalize_density(raw)
@@ -195,18 +197,18 @@ def infer(x):
 
     for _ in range(STEPS):
         # Normal PC part: update hidden state by gradient descent on PC energy.
-        a = a.detach().requires_grad_(True)
+        a = a.detach().requires_grad_(True) # can this function update the hidden state 
         energy = pc_reaction_energy(a, x)
-        (grad_a,) = torch.autograd.grad(energy, a)
-
+        (grad_a,) = torch.autograd.grad(energy, a) # are you sure can this simple function do accurate gradient of density
+                                                   # tbh i need this to be manual calcualtion
         with torch.no_grad():
-            a = normalize_density(a - REACTION_LR * grad_a)
+            a = normalize_density(a - REACTION_LR * grad_a) # normalization after gradient fix
 
         # Fluid part: velocity moves the hidden density across the 2D grid.
-        u = make_velocity(a, x)
-        a = advect(a, u)
-        a = a + DT * DIFFUSION * laplacian(a)
-        a = normalize_density(a)
+        u = make_velocity(a, x) # idk this is somehow the idea of stream function and HJB optimal transport happen
+        a = advect(a, u) # additional advectional change on density
+        a = a + DT * DIFFUSION * laplacian(a) # adding somekind of divergence to the density
+        a = normalize_density(a) # then normalize the density again
 
     return a
 
@@ -215,22 +217,24 @@ def train_batch(images, labels, optimizer):
     x = images.to(DEVICE)
     y = labels.to(DEVICE)
 
-    optimizer.zero_grad(set_to_none=True)
+    optimizer.zero_grad(set_to_none=True) # i am not sure why exactly i need this
 
-    a = infer(x)
-    logits = classify(a)
-    x_hat = reconstruct(a)
-    a_hat = predict_density(a, x)
+    a = infer(x) # we get trained density value according to IFN(incompressible fluid network)
+    logits = classify(a) # is this target pridiction
+    x_hat = reconstruct(a) # this is image pridiction or reconstruction
+    a_hat = predict_density(a, x) # this is density pridiction itself
 
-    class_loss = F.cross_entropy(logits, y)
+    class_loss = F.cross_entropy(logits, y) # i need this to be manual calulation rather than being corss_entropy call
+                                            # and do we exactlly add the cross entropy in pc weight optimization??
     recon_loss = F.mse_loss(x_hat, x)
     pred_loss = F.mse_loss(a, a_hat)
     loss = class_loss + 0.10 * recon_loss + 0.05 * pred_loss
 
-    loss.backward()
-    optimizer.step()
+    loss.backward() # what the hell is backward for, i really need this to be manual calculation
+    optimizer.step() # i need this optimization to be adam, idk if HJB can be used as optimizer
+                     # 
 
-    with torch.no_grad():
+    with torch.no_grad(): # idk what this block of code doing
         acc = (logits.argmax(dim=1) == y).float().mean().item() * 100
 
     return loss.item(), class_loss.item(), recon_loss.item(), acc
@@ -282,6 +286,63 @@ def parse_args():
     return p.parse_args()
 
 
+
+def inspect_one_image_density(train_loader):
+    """
+    Take one MNIST image, print its pixel values,
+    convert it to density, and print the result.
+    """
+
+    images, labels = next(iter(train_loader))
+
+    # Keep batch dimension: [1, 1, 28, 28]
+    x = images[0:1].to(DEVICE)
+    label = labels[0].item()
+
+    print("=" * 70)
+    print("Inspecting one MNIST image -> density")
+    print("=" * 70)
+
+    print(f"Label: {label}")
+    print(f"x shape: {x.shape}")
+
+    print()
+    print("Original image stats")
+    print(f"min pixel value: {x.min().item():.6f}")
+    print(f"max pixel value: {x.max().item():.6f}")
+    print(f"sum of pixels  : {x.sum().item():.6f}")
+
+    # Convert image to density
+    a = image_to_density(x)
+
+    print()
+    print("Density stats after image_to_density(x)")
+    print(f"a shape: {a.shape}")
+    print(f"min density value: {a.min().item():.10f}")
+    print(f"max density value: {a.max().item():.10f}")
+    print(f"sum of density   : {a.sum().item():.10f}")
+
+    # Show a small 8x8 crop so it is readable
+    row_start, row_end = 10, 18
+    col_start, col_end = 10, 18
+
+    print()
+    print("Original pixel crop x[10:18, 10:18]")
+    print(x[0, 0, row_start:row_end, col_start:col_end].cpu())
+
+    print()
+    print("Density crop a[10:18, 10:18]")
+    print(a[0, 0, row_start:row_end, col_start:col_end].cpu())
+
+    print()
+    print("Check mass with sum(dim=(1, 2, 3), keepdim=True)")
+    mass = a.sum(dim=(1, 2, 3), keepdim=True)
+    print(f"mass shape: {mass.shape}")
+    print(f"mass value: {mass}")
+
+    print("=" * 70)
+
+
 def main():
     args = parse_args()
 
@@ -296,19 +357,23 @@ def main():
     train_loader = make_loader(train=True, subset=args.train_subset)
     test_loader = make_loader(train=False, subset=args.test_subset)
 
-    for epoch in range(1, args.epochs + 1):
-        for batch_idx, (images, labels) in enumerate(train_loader):
-            loss, class_loss, recon_loss, acc = train_batch(images, labels, optimizer)
+    inspect_one_image_density(train_loader)
 
-            if batch_idx % 20 == 0:
-                print(
-                    f"epoch={epoch} batch={batch_idx:03d} "
-                    f"loss={loss:.4f} class={class_loss:.4f} "
-                    f"recon={recon_loss:.4f} acc={acc:.1f}%"
-                )
+    # for epoch in range(1, args.epochs + 1):
+    #     for batch_idx, (images, labels) in enumerate(train_loader):
+    #         loss, class_loss, recon_loss, acc = train_batch(images, labels, optimizer)
 
-        test_acc = evaluate(test_loader)
-        print(f"epoch={epoch} test_acc={test_acc:.2f}%")
+    #         if batch_idx % 20 == 0:
+    #             print(
+    #                 f"epoch={epoch} batch={batch_idx:03d} "
+    #                 f"loss={loss:.4f} class={class_loss:.4f} "
+    #                 f"recon={recon_loss:.4f} acc={acc:.1f}%"
+    #             )
+
+    #     test_acc = evaluate(test_loader)
+    #     print(f"epoch={epoch} test_acc={test_acc:.2f}%")
+
+    
 
 
 if __name__ == "__main__":
