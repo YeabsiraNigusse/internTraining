@@ -55,14 +55,23 @@ def image_to_density(x, eps=1e-6):
     a = x.clamp_min(0.0) + eps
     return a / a.sum(dim=(1, 2, 3), keepdim=True)
 
-
+# we are doing shift to the left or right depending on the sign of the parameter
 def roll_x(z, shift):
     return torch.roll(z, shifts=shift, dims=-1)
 
-
+# up or down shift 
 def roll_y(z, shift):
     return torch.roll(z, shifts=shift, dims=-2)
 
+
+# we need them cuz of the following computation need
+
+# spatial derivative
+# divergence
+# velocity gradient
+# pressure gradient
+# laplacian
+# advection
 
 def ddx(z):
     """Central difference in the horizontal direction."""
@@ -357,24 +366,31 @@ def main():
     train_loader = make_loader(train=True, subset=args.train_subset)
     test_loader = make_loader(train=False, subset=args.test_subset)
 
-    inspect_one_image_density(train_loader)
+    # inspect_one_image_density(train_loader)
 
-    # for epoch in range(1, args.epochs + 1):
-    #     for batch_idx, (images, labels) in enumerate(train_loader):
-    #         loss, class_loss, recon_loss, acc = train_batch(images, labels, optimizer)
+    for epoch in range(1, args.epochs + 1):
+        for batch_idx, (images, labels) in enumerate(train_loader):
+            loss, class_loss, recon_loss, acc = train_batch(images, labels, optimizer)
 
-    #         if batch_idx % 20 == 0:
-    #             print(
-    #                 f"epoch={epoch} batch={batch_idx:03d} "
-    #                 f"loss={loss:.4f} class={class_loss:.4f} "
-    #                 f"recon={recon_loss:.4f} acc={acc:.1f}%"
-    #             )
+            if batch_idx % 20 == 0:
+                print(
+                    f"epoch={epoch} batch={batch_idx:03d} "
+                    f"loss={loss:.4f} class={class_loss:.4f} "
+                    f"recon={recon_loss:.4f} acc={acc:.1f}%"
+                )
 
-    #     test_acc = evaluate(test_loader)
-    #     print(f"epoch={epoch} test_acc={test_acc:.2f}%")
+        test_acc = evaluate(test_loader)
+        print(f"epoch={epoch} test_acc={test_acc:.2f}%")
 
     
 
 
 if __name__ == "__main__":
     main()
+
+
+
+# things i belive should be fixed
+
+# 1 increase the amount of train data
+# 2 update the gradient calculation both for the wight and hidden state
