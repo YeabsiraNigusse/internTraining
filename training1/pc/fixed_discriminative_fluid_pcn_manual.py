@@ -12,17 +12,6 @@ Errors used:
     1. hidden/density prediction error: eps_a = a - a_hat
     2. class/output error: softmax cross-entropy
 
-Errors NOT used:
-    - no image reconstruction error
-    - no decoder
-    - no recon_loss
-
-Training style:
-    - no loss.backward()
-    - no optimizer.step()
-    - manual hidden-density inference
-    - manual PC-style weight updates
-
 Fluid part:
     - after the PC reaction step, density is moved by advection
     - velocity is produced from a simple stream function
@@ -49,16 +38,16 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 IMG = 28
 PIXELS = IMG * IMG
 BATCH = 128
-EPOCHS = 3
-TRAIN_SUBSET = 5000
-TEST_SUBSET = 1000
+EPOCHS = 10
+TRAIN_SUBSET = 40000
+TEST_SUBSET = 10000
 
 # Inner inference settings
 INFER_STEPS = 5
 H_LR = 0.25
 
 # Manual parameter update rate
-W_LR = 0.02
+W_LR = 0.01
 
 # Fluid settings
 DT = 0.5
@@ -67,7 +56,9 @@ DIFFUSION = 0.001
 
 # Energy weights
 DENSITY_WEIGHT = 1.0
-CLASS_WEIGHT = 1.0
+READOUT_SCALE = float(PIXELS)
+CLASS_WEIGHT = 1.0 / READOUT_SCALE
+USE_LABEL_INFERENCE = False
 
 
 # ============================================================
@@ -84,9 +75,10 @@ def normalize_density(a, eps=1e-8):
         a > 0
         a.sum(dim=(1,2,3)) = 1
     """
-    a = F.softplus(a)
-    mass = a.sum(dim=(1, 2, 3), keepdim=True)
-    return a / (mass + eps)
+    # this thing should be divergence free/we should not lose information during normalization
+    a = a.clamp_min(eps)
+    mass = a.sum(dim=(1, 2, 3), keepdim=True).clamp_min(eps)
+    return a / mass
 
 
 def image_to_density(x, eps=1e-6):
@@ -114,11 +106,11 @@ def ddx(z):
 def ddy(z):
     return 0.5 * (roll_y(z, -1) - roll_y(z, 1))
 
-
+# what is the formula here and why
 def laplacian(z):
     return roll_x(z, -1) + roll_x(z, 1) + roll_y(z, -1) + roll_y(z, 1) - 4.0 * z
 
-
+# more about this
 def velocity_from_stream(psi):
     """
     u_x =  d psi / dy
@@ -128,13 +120,14 @@ def velocity_from_stream(psi):
     uy = -ddx(psi)
     return torch.cat([ux, uy], dim=1)
 
+# what is CFL and scaling velocity
 
 def scale_velocity(u):
     max_speed = u.abs().amax(dim=(1, 2, 3), keepdim=True)
     scale = TARGET_CFL / (DT * max_speed + 1e-8)
     return u * scale.clamp(max=10.0)
 
-
+# how is the advection derived
 def advect(a, u):
     """
     Conservative density transport:
@@ -203,10 +196,19 @@ def classify_density(a):
     """
     Hidden density predicts class logits.
     """
-    a_flat = a.flatten(1)
-    return a_flat @ W_cls + b_cls
+    return density_features(a) @ W_cls + b_cls
 
 
+def density_features(a):
+    """
+    Classifier features for a mass-normalized density.
+
+    Since a.sum() = 1, raw density values are tiny. Scaling by the grid size
+    keeps the readout gradients in a useful range.
+    """
+    return a.flatten(1) * READOUT_SCALE
+
+# why do we shift the logits here
 def softmax_manual(logits):
     shifted = logits - logits.max(dim=1, keepdim=True).values
     exp_logits = torch.exp(shifted)
@@ -216,7 +218,7 @@ def softmax_manual(logits):
 def cross_entropy_manual(probs, y_onehot):
     return -(y_onehot * torch.log(probs + 1e-8)).sum(dim=1).mean()
 
-
+# how are we forming velocity here
 def make_velocity(a, x):
     """
     Fixed stream function for fluid transport.
@@ -231,7 +233,7 @@ def make_velocity(a, x):
 # Inference and manual learning
 # ============================================================
 
-def infer_density(x, y_onehot):
+def infer_density(x, y_onehot=None):
     """
     Inner predictive-coding inference loop.
 
@@ -241,9 +243,8 @@ def infer_density(x, y_onehot):
 
     where:
         E_density = 0.5 / PIXELS * ||a - a_hat||^2
-        E_class   = CE(softmax(classify(a)), y)
+        E_class   = CE(softmax(classify(a)), y), only when y is clamped
 
-    No reconstruction error.
     """
 
     # Feedforward-style initialization.
@@ -258,26 +259,30 @@ def infer_density(x, y_onehot):
         a_hat = predict_density_from_image(x)
         eps_a = a - a_hat
 
-        logits = classify_density(a)
-        probs = softmax_manual(logits)
-
         # Manual gradient of density MSE wrt a:
         # d/d a [0.5/PIXELS * ||a - a_hat||^2] = (a - a_hat)/PIXELS
         grad_density = DENSITY_WEIGHT * eps_a / PIXELS
 
-        # Manual gradient of CE wrt logits:
-        # d CE / d logits = probs - y
-        #
-        # logits = flatten(a) @ W_cls + b_cls
-        # so:
-        # d CE / d flatten(a) = (probs - y) @ W_cls.T
-        grad_class_flat = CLASS_WEIGHT * ((probs - y_onehot) @ W_cls.t())
-        grad_class = grad_class_flat.view_as(a)
+        if y_onehot is None or CLASS_WEIGHT == 0.0:
+            grad_class = torch.zeros_like(a)
+        else:
+            logits = classify_density(a)
+            probs = softmax_manual(logits)
+
+            # Manual gradient of CE wrt logits:
+            # d CE / d logits = probs - y
+            #
+            # logits = READOUT_SCALE * flatten(a) @ W_cls + b_cls
+            # so:
+            # d CE / d flatten(a) = READOUT_SCALE * (probs - y) @ W_cls.T
+            grad_class_flat = CLASS_WEIGHT * READOUT_SCALE * ((probs - y_onehot) @ W_cls.t())
+            grad_class = grad_class_flat.view_as(a)
 
         # Total manual hidden-density gradient
         grad_a = grad_density + grad_class
 
         # PC reaction update
+        # are we making sure that there is no divergence happning here
         a = normalize_density(a - H_LR * grad_a)
 
         # -----------------------------
@@ -287,7 +292,8 @@ def infer_density(x, y_onehot):
         a = advect(a, u)
 
         # Optional diffusion/smoothing
-        a = a + DT * DIFFUSION * laplacian(a)
+        if DIFFUSION > 0.0:
+            a = a + DT * DIFFUSION * laplacian(a)
 
         # Keep valid density
         a = normalize_density(a)
@@ -299,9 +305,6 @@ def train_batch(images, labels):
     """
     Manual PC/IL update.
 
-    No autograd.
-    No backward.
-    No optimizer.
     """
     global W_in, b_a, W_cls, b_cls
 
@@ -314,7 +317,8 @@ def train_batch(images, labels):
     # -----------------------------
     # 1. Infer hidden density
     # -----------------------------
-    a = infer_density(x, y_onehot)
+    infer_labels = y_onehot if USE_LABEL_INFERENCE else None
+    a = infer_density(x, infer_labels)
 
     # -----------------------------
     # 2. Recompute final local errors
@@ -334,7 +338,7 @@ def train_batch(images, labels):
     # -----------------------------
 
     x_flat = x.flatten(1)
-    a_flat = a.flatten(1)
+    features = density_features(a)
     eps_a_flat = eps_a.flatten(1)
 
     # x -> hidden-density predictor update.
@@ -351,7 +355,7 @@ def train_batch(images, labels):
     #
     # Same as:
     #     W += lr * a.T @ (y - probs)
-    W_cls += W_LR * (a_flat.t() @ (y_onehot - probs)) / B
+    W_cls += W_LR * (features.t() @ (y_onehot - probs)) / B
     b_cls += W_LR * (y_onehot - probs).mean(dim=0)
 
     # -----------------------------
@@ -368,11 +372,8 @@ def evaluate(loader):
     """
     Testing for discriminative PCN.
 
-    During testing the label is unknown.
-    For clean discriminative PCN, we do a feedforward prediction:
-        x -> a -> logits
-
-    We use normalized image density as stable visible hidden state.
+    During testing the label is unknown, so this uses the same no-label
+    density/fluid inference path used by default during training.
     """
     total_correct = 0
     total_seen = 0
@@ -381,9 +382,7 @@ def evaluate(loader):
         x = images.to(DEVICE)
         y = labels.to(DEVICE)
 
-        # Simple discriminative testing.
-        # This is stable because a is a valid density.
-        a = image_to_density(x)
+        a = infer_density(x, y_onehot=None)
 
         logits = classify_density(a)
         probs = softmax_manual(logits)
@@ -421,7 +420,8 @@ def smoke_test():
 
     # Check density mass after inference
     y_onehot = F.one_hot(y.to(DEVICE), 10).float()
-    a = infer_density(x.to(DEVICE), y_onehot)
+    infer_labels = y_onehot if USE_LABEL_INFERENCE else None
+    a = infer_density(x.to(DEVICE), infer_labels)
     print("density shape:", tuple(a.shape))
     print("mass per item:", a.sum(dim=(1, 2, 3)).detach().cpu())
 
@@ -429,19 +429,49 @@ def smoke_test():
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--epochs", type=int, default=EPOCHS)
+    p.add_argument("--batch_size", type=int, default=BATCH)
     p.add_argument("--train_subset", type=int, default=TRAIN_SUBSET)
     p.add_argument("--test_subset", type=int, default=TEST_SUBSET)
+    p.add_argument("--inner_steps", type=int, default=INFER_STEPS)
+    p.add_argument("--h_lr", type=float, default=H_LR)
+    p.add_argument("--w_lr", type=float, default=W_LR)
+    p.add_argument("--dt", type=float, default=DT)
+    p.add_argument("--target_cfl", type=float, default=TARGET_CFL)
+    p.add_argument("--diffusion", type=float, default=DIFFUSION)
+    p.add_argument("--density_weight", type=float, default=DENSITY_WEIGHT)
+    p.add_argument("--class_weight", type=float, default=None)
+    p.add_argument("--readout_scale", type=float, default=READOUT_SCALE)
+    p.add_argument("--label_inference", action="store_true")
     p.add_argument("--smoke_test", action="store_true")
     return p.parse_args()
 
 
 def main():
+    global BATCH, INFER_STEPS, H_LR, W_LR, DT, TARGET_CFL, DIFFUSION
+    global DENSITY_WEIGHT, CLASS_WEIGHT, READOUT_SCALE, USE_LABEL_INFERENCE
+
     args = parse_args()
+    BATCH = args.batch_size
+    INFER_STEPS = args.inner_steps
+    H_LR = args.h_lr
+    W_LR = args.w_lr
+    DT = args.dt
+    TARGET_CFL = args.target_cfl
+    DIFFUSION = args.diffusion
+    DENSITY_WEIGHT = args.density_weight
+    READOUT_SCALE = args.readout_scale
+    CLASS_WEIGHT = args.class_weight if args.class_weight is not None else 1.0 / READOUT_SCALE
+    USE_LABEL_INFERENCE = args.label_inference
 
     print("Clean Discriminative Fluid-PCN MNIST")
     print(f"device={DEVICE}")
     print("Errors: density prediction error + class CE error")
-    print("No reconstruction error. No loss.backward(). No optimizer.step().")
+    print(f"inference_mode={'label-clamped' if USE_LABEL_INFERENCE else 'no-label'}")
+    print(
+        f"inner_steps={INFER_STEPS} h_lr={H_LR} w_lr={W_LR} "
+        f"readout_scale={READOUT_SCALE} target_cfl={TARGET_CFL}"
+    )
+
 
     if args.smoke_test:
         smoke_test()
@@ -449,6 +479,8 @@ def main():
 
     train_loader = make_loader(train=True, subset=args.train_subset)
     test_loader = make_loader(train=False, subset=args.test_subset)
+
+    best_test_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
         for batch_idx, (images, labels) in enumerate(train_loader):
@@ -462,8 +494,9 @@ def main():
                 )
 
         test_acc = evaluate(test_loader)
+        best_test_acc = max(best_test_acc, test_acc)
         print("=" * 70)
-        print(f"epoch={epoch} test_acc={test_acc:.2f}%")
+        print(f"epoch={epoch} test_acc={test_acc:.2f}% best={best_test_acc:.2f}%")
         print("=" * 70)
 
 
