@@ -58,7 +58,7 @@ DIFFUSION = 0.001
 DENSITY_WEIGHT = 1.0
 READOUT_SCALE = float(PIXELS)
 CLASS_WEIGHT = 1.0 / READOUT_SCALE
-USE_LABEL_INFERENCE = False
+USE_LABEL_INFERENCE = True
 
 
 # ============================================================
@@ -233,7 +233,7 @@ def make_velocity(a, x):
 # Inference and manual learning
 # ============================================================
 
-def infer_density(x, y_onehot=None):
+def infer_density(x, y_onehot):
     """
     Inner predictive-coding inference loop.
 
@@ -317,6 +317,8 @@ def train_batch(images, labels):
     # -----------------------------
     # 1. Infer hidden density
     # -----------------------------
+    # During training the correct label is clamped, so the hidden density is
+    # inferred from both the image-density error and the class-prediction error.
     infer_labels = y_onehot if USE_LABEL_INFERENCE else None
     a = infer_density(x, infer_labels)
 
@@ -372,8 +374,9 @@ def evaluate(loader):
     """
     Testing for discriminative PCN.
 
-    During testing the label is unknown, so this uses the same no-label
-    density/fluid inference path used by default during training.
+    During testing the label is unknown, so the output/class error is not
+    clamped. We still use the learned discriminative path x -> a_hat -> class,
+    matching the feedforward evaluation behavior of the JAX examples.
     """
     total_correct = 0
     total_seen = 0
@@ -382,7 +385,7 @@ def evaluate(loader):
         x = images.to(DEVICE)
         y = labels.to(DEVICE)
 
-        a = infer_density(x, y_onehot=None)
+        a = normalize_density(predict_density_from_image(x))
 
         logits = classify_density(a)
         probs = softmax_manual(logits)
@@ -441,7 +444,7 @@ def parse_args():
     p.add_argument("--density_weight", type=float, default=DENSITY_WEIGHT)
     p.add_argument("--class_weight", type=float, default=None)
     p.add_argument("--readout_scale", type=float, default=READOUT_SCALE)
-    p.add_argument("--label_inference", action="store_true")
+    p.add_argument("--no_label_inference", action="store_true")
     p.add_argument("--smoke_test", action="store_true")
     return p.parse_args()
 
@@ -461,7 +464,7 @@ def main():
     DENSITY_WEIGHT = args.density_weight
     READOUT_SCALE = args.readout_scale
     CLASS_WEIGHT = args.class_weight if args.class_weight is not None else 1.0 / READOUT_SCALE
-    USE_LABEL_INFERENCE = args.label_inference
+    USE_LABEL_INFERENCE = not args.no_label_inference
 
     print("Clean Discriminative Fluid-PCN MNIST")
     print(f"device={DEVICE}")
