@@ -38,7 +38,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 IMG = 28
 PIXELS = IMG * IMG
 BATCH = 128
-EPOCHS = 10
+EPOCHS = 20
 TRAIN_SUBSET = 40000
 TEST_SUBSET = 10000
 
@@ -59,6 +59,7 @@ DENSITY_WEIGHT = 1.0
 READOUT_SCALE = float(PIXELS)
 CLASS_WEIGHT = 1.0 / READOUT_SCALE
 USE_LABEL_INFERENCE = True
+HIDDEN_INIT = "zero"
 
 
 # ============================================================
@@ -89,6 +90,21 @@ def image_to_density(x, eps=1e-6):
     """
     a = x.clamp_min(0.0) + eps
     return a / a.sum(dim=(1, 2, 3), keepdim=True)
+
+
+def initial_hidden_density(x):
+    """
+    Initial hidden density for PC inference.
+
+    zero -> a zero-like hidden state made valid by using uniform mass
+    random -> random positive density
+    image -> image-shaped density, kept for comparison experiments
+    """
+    if HIDDEN_INIT == "random":
+        return normalize_density(torch.rand_like(x))
+    if HIDDEN_INIT == "image":
+        return image_to_density(x)
+    return torch.full_like(x, 1.0 / PIXELS)
 
 
 def roll_x(z, shift):
@@ -233,7 +249,7 @@ def make_velocity(a, x):
 # Inference and manual learning
 # ============================================================
 
-def infer_density(x, y_onehot):
+def infer_density(x, y_onehot=None):
     """
     Inner predictive-coding inference loop.
 
@@ -247,9 +263,7 @@ def infer_density(x, y_onehot):
 
     """
 
-    # Feedforward-style initialization.
-    # We start from the image density because it is already positive and spatial.
-    a = image_to_density(x)
+    a = initial_hidden_density(x)
 
     for _ in range(INFER_STEPS):
         # -----------------------------
@@ -375,8 +389,8 @@ def evaluate(loader):
     Testing for discriminative PCN.
 
     During testing the label is unknown, so the output/class error is not
-    clamped. We still use the learned discriminative path x -> a_hat -> class,
-    matching the feedforward evaluation behavior of the JAX examples.
+    clamped. The hidden density starts from the same initializer as training,
+    then runs image-only inference before classification.
     """
     total_correct = 0
     total_seen = 0
@@ -385,7 +399,7 @@ def evaluate(loader):
         x = images.to(DEVICE)
         y = labels.to(DEVICE)
 
-        a = normalize_density(predict_density_from_image(x))
+        a = infer_density(x, y_onehot=None)
 
         logits = classify_density(a)
         probs = softmax_manual(logits)
@@ -444,6 +458,7 @@ def parse_args():
     p.add_argument("--density_weight", type=float, default=DENSITY_WEIGHT)
     p.add_argument("--class_weight", type=float, default=None)
     p.add_argument("--readout_scale", type=float, default=READOUT_SCALE)
+    p.add_argument("--hidden_init", choices=["zero", "random", "image"], default=HIDDEN_INIT)
     p.add_argument("--no_label_inference", action="store_true")
     p.add_argument("--smoke_test", action="store_true")
     return p.parse_args()
@@ -451,7 +466,7 @@ def parse_args():
 
 def main():
     global BATCH, INFER_STEPS, H_LR, W_LR, DT, TARGET_CFL, DIFFUSION
-    global DENSITY_WEIGHT, CLASS_WEIGHT, READOUT_SCALE, USE_LABEL_INFERENCE
+    global DENSITY_WEIGHT, CLASS_WEIGHT, READOUT_SCALE, USE_LABEL_INFERENCE, HIDDEN_INIT
 
     args = parse_args()
     BATCH = args.batch_size
@@ -465,6 +480,7 @@ def main():
     READOUT_SCALE = args.readout_scale
     CLASS_WEIGHT = args.class_weight if args.class_weight is not None else 1.0 / READOUT_SCALE
     USE_LABEL_INFERENCE = not args.no_label_inference
+    HIDDEN_INIT = args.hidden_init
 
     print("Clean Discriminative Fluid-PCN MNIST")
     print(f"device={DEVICE}")
@@ -472,7 +488,7 @@ def main():
     print(f"inference_mode={'label-clamped' if USE_LABEL_INFERENCE else 'no-label'}")
     print(
         f"inner_steps={INFER_STEPS} h_lr={H_LR} w_lr={W_LR} "
-        f"readout_scale={READOUT_SCALE} target_cfl={TARGET_CFL}"
+        f"readout_scale={READOUT_SCALE} target_cfl={TARGET_CFL} hidden_init={HIDDEN_INIT}"
     )
 
 
