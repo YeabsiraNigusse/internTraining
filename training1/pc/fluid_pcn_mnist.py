@@ -56,7 +56,7 @@ EPS = 1e-8
 @dataclass
 class Config:
     batch_size: int = 128
-    epochs: int = 10
+    epochs: int = 5
     train_subset: int = 40000
     test_subset: int = 8000
 
@@ -282,6 +282,8 @@ class FluidPCN(nn.Module):
         # Encodes the whole image into a compact central source density.  The
         # source is spatially restricted, so it cannot directly place mass in a
         # class target region.
+        
+        # what is encoder 
         self.source_encoder = nn.Sequential(
             nn.Flatten(),
             nn.Linear(PIXELS, 128),
@@ -332,14 +334,20 @@ class FluidPCN(nn.Module):
 
     def source_density(self, x: torch.Tensor) -> torch.Tensor:
         batch = x.shape[0]
+        # why EPS here - incase exact zero happend during image learning and reduction to the size 1 by 36
         source_values = F.softplus(self.source_encoder(x)) + EPS
+        # creating source with dimention of [batch, 1, 28, 28]
         source = torch.zeros(batch, 1, IMG, IMG, device=x.device, dtype=x.dtype)
         source_size = 6
         y0 = IMG // 2 - source_size // 2
         x0 = IMG // 2 - source_size // 2
+        # fitting the learned and reduced dimention to the whole image size
+        # the dimention of the image or source is [batch, 1, 28, 28]
+        # part of this dimention specifically [batch, 1, 11:17, 11:17] will be filed by the compressed image value of 1 by 36 value
         source[:, :, y0 : y0 + source_size, x0 : x0 + source_size] = source_values.view(
             batch, 1, source_size, source_size
         )
+        # 
         return normalize_density(source)
 
     def pc_prediction(self, a: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -636,7 +644,7 @@ def smoke_test(cfg: Config) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--train_subset", type=int, default=40000)
     p.add_argument("--test_subset", type=int, default=10000)
