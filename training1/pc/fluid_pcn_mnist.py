@@ -332,6 +332,7 @@ class FluidPCN(nn.Module):
         self.register_buffer("target_masks", TARGET_MASKS.clone())
         self.register_buffer("distance_maps", DISTANCE_MAPS.clone())
 
+    # concentrate the mass in the center with the actual image dimention
     def source_density(self, x: torch.Tensor) -> torch.Tensor:
         batch = x.shape[0]
         # why EPS here - incase exact zero happend during image learning and reduction to the size 1 by 36
@@ -353,7 +354,10 @@ class FluidPCN(nn.Module):
     def pc_prediction(self, a: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """A valid density prediction based on local neighbors and source drive."""
 
+        # like what exactly is happning when we call pc_local with the changing density
+        
         local_logits = self.pc_local(a)
+        # i think source will be the same for every inference step
         source = self.source_density(x)
         positive = F.softplus(local_logits + 2.0 * source) + EPS
         return normalize_density(positive)
