@@ -746,3 +746,36 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+# let me put my questions here
+
+# 1 what is cnn and what are its difference from standared feedforwared neural network
+# 2 is there a difference between conv and conv2d cuz i have seen parameter difference intake 
+# 3 inside pc_pridiction archtecture we take a density and the actual image being sourced, 
+# what exactly does the changing a in every inference step give to the convolution layer and what exactlly is the conv learning
+
+
+# 4 why with the actuall image and doesnt normalization create loss of infomation, even when we source it,
+# what is the point of concentrating the image mass to the center with 6 by 6 dimention it to 28 by 28 source
+
+
+# 5 ofc this is totally different pc archtecture from what i know like even with one hidden layer there should be things that happened
+# 1 we have our image then our single layer and output layer, if we are considering implementing generative pc we take the final output prediction
+# which could be w1z2 + b1 with activation will predict z1 which is our hidden layer hidden state and we predict w0z1 + b0 to predict
+# the actual image then using the two prediction error we find the gradient and update the z1 and for z2 we only use the prediction error 
+# taken from the difference between w1z2 + b1 with activation and actual z1, and as fara as i know intially all this parameter will be 
+# intialized randomelly at least when we start then errors and learning from the actuall input train the hidden states
+
+# i am not sure the use of conv is related with the need to preprsent fluidic behviour cuz we have the circular padding
+# even having the convolution not seen this sequention prediction of z1 and z2, all the prediction error calculation makes me dout the pc_prediction function
+# regardless of its number of layer, so i want explantion what exactlly is happning or what kind of learning is happning inside the function
+
+# tbh i dont get the following line
+#   asks: Given the density in this location and its neighboring cells, what density pattern should be locally expected?
+# so like what exactly are we learning/predicting here, i know a is changing and we have the actual image both contered in the
+# center what does the conv2d bring to the table plus that does the cobination of the actula source image and pc local bring
+
+# this all could be due to i dont have any knowuldge about cnn archtecure but i want to ask check wheather we are doing the actuall pc with intention fluid dynamic
+
