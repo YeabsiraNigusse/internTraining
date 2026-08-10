@@ -305,16 +305,16 @@ class FluidPCN(nn.Module):
         # to the task-relevant class region.  This is a practical finite-grid
         # surrogate for the paper's abstract HJB value function.
         self.value_encoder = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1),
+            nn.Conv2d(1, 16, 3, padding=1), # [B,1,28,28]→[B,16,28,28].
             nn.GELU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(16, 32, 3, padding=1),
+            nn.MaxPool2d(2), # reducing the spatial size by 2:
+            nn.Conv2d(16, 32, 3, padding=1), # gives [B,32,14,14].
             nn.GELU(),
-            nn.MaxPool2d(2),
-            nn.Flatten(),
+            nn.MaxPool2d(2), # pool again
+            nn.Flatten(), # [B,32,7,7]→[B,1568].
             nn.Linear(32 * 7 * 7, 256),
             nn.GELU(),
-            nn.Linear(256, PIXELS),
+            nn.Linear(256, PIXELS), # 1568→256→784.
         )
 
         # Stream-function controller.  It receives current mass, the image, and
@@ -353,11 +353,9 @@ class FluidPCN(nn.Module):
 
     def pc_prediction(self, a: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """A valid density prediction based on local neighbors and source drive."""
-
-        # like what exactly is happning when we call pc_local with the changing density
         
         local_logits = self.pc_local(a)
-        # i think source will be the same for every inference step
+        # source will be the same for every inference step
         source = self.source_density(x)
         positive = F.softplus(local_logits + 2.0 * source) + EPS
         return normalize_density(positive)
@@ -366,13 +364,32 @@ class FluidPCN(nn.Module):
         raw = self.value_encoder(x).view(-1, 1, IMG, IMG)
         return torch.sigmoid(raw)
 
+# learned feature might respond to:
+    # high density + decreasing value toward the right.
+
+# Another might respond to:
+    # image stroke + density edge.
+
+# Another might respond to:
+    # density sitting in a high-cost area.
+
+# We cannot say exactly what they learn without inspecting trained weights/activations, 
+# but mathematically that's what they're able to represent.
+
     def velocity(
         self,
         a: torch.Tensor,
         x: torch.Tensor,
         value_map: torch.Tensor,
     ) -> torch.Tensor:
-        psi = self.stream_controller(torch.cat([a, x, value_map], dim=1))
+        # It generates one scalar field ψ, then converts it into an incompressible velocity.
+        # That is the substitute for explicit pressure projection in this implementation.
+        
+        psi = self.stream_controller(torch.cat([a, x, value_map], dim=1)) # concatenates across the channel dimension.
+        # Given where mass currently is, 
+            # which image I'm looking at, and where the low-cost destination appears to be, 
+            # what flow field should I generate?
+            
         u = velocity_from_stream(psi)
         return scale_velocity_to_cfl(
             u,
