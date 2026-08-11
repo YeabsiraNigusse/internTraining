@@ -332,6 +332,13 @@ class FluidPCN(nn.Module):
         self.register_buffer("target_masks", TARGET_MASKS.clone())
         self.register_buffer("distance_maps", DISTANCE_MAPS.clone())
 
+    def random_density(self, x: torch.Tensor) -> torch.Tensor:
+        """Random central unit-mass hidden state, independent of image content."""
+
+        # x is used only for batch/device/dtype/shape; no pixel values seed a.
+        raw = (torch.rand_like(x) + EPS) * self.source_mask
+        return normalize_density(raw)
+
     # concentrate the mass in the center with the actual image dimention
     def source_density(self, x: torch.Tensor) -> torch.Tensor:
         batch = x.shape[0]
@@ -357,7 +364,7 @@ class FluidPCN(nn.Module):
         local_logits = self.pc_local(a)
         # source will be the same for every inference step
         source = self.source_density(x)
-        positive = F.softplus(local_logits + 2.0 * source) + EPS
+        positive = F.softplus(local_logits) + EPS
         return normalize_density(positive)
 
     def value_map(self, x: torch.Tensor) -> torch.Tensor:
@@ -421,7 +428,7 @@ def infer_density(
     """Run PC reaction + learned incompressible advection without BPTT."""
 
     total_steps = cfg.infer_steps if steps is None else steps
-    a = model.source_density(x)
+    a = model.random_density(x)
     value = model.value_map(x)
 
     max_mass_error = 0.0
@@ -795,4 +802,3 @@ if __name__ == "__main__":
 # center what does the conv2d bring to the table plus that does the cobination of the actula source image and pc local bring
 
 # this all could be due to i dont have any knowuldge about cnn archtecure but i want to ask check wheather we are doing the actuall pc with intention fluid dynamic
-
