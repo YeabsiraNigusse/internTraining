@@ -6,8 +6,10 @@ A practical, discriminative Fluid-PCN experiment for MNIST.
 This is not an exact solver of the HJB equation on SDiff(M).  It implements the
 paper's practical recipe:
 
-1. One conserved hidden activation density a on a 28x28 periodic manifold.
-2. Predictive-coding reaction using a valid positive, mass-normalized prediction.
+1. One conserved PC hidden state z1 on a 28x28 periodic manifold, constrained
+   to be the physical activation density used by the fluid solver.
+2. A two-hidden-layer generative predictive-coding chain z2 -> z1 -> x, with
+   local latent inference and manual local PC parameter learning.
 3. A learned value-like cost-to-go map supervised by the task.
 4. A learned stream function psi, giving a divergence-free velocity
        u = (d psi / dy, -d psi / dx).
@@ -17,8 +19,9 @@ paper's practical recipe:
    receding-horizon rollout.
 8. A real routing bottleneck: each class is represented by a small target region,
    and the classifier reads only the mass delivered to those ten regions.
-9. No backpropagation through the long PC inference loop.  PC, value, and flow
-   parameters are updated from local/fixed-state objectives after inference.
+9. No backpropagation through the long PC inference loop.  PC parameters are
+   updated manually from local errors; value and flow parameters keep their
+   existing fixed-state objectives after inference.
 
 Run a smoke test:
     python fluid_pcn_mnist.py --smoke_test
@@ -63,7 +66,9 @@ class Config:
     # PC inference
     infer_steps: int = 5
     hidden_lr: float = 0.01
-    pc_reaction_weight: float = 1.0
+    z2_channels: int = 8
+    pc_weight_decay: float = 1e-4
+    pc_latent_clip: float = 1.0
 
     # Short receding-horizon controller training
     control_horizon: int = 5
@@ -279,20 +284,12 @@ class FluidPCN(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        # Encodes the whole image into a compact central source density.  The
-        # source is spatially restricted, so it cannot directly place mass in a
-        # class target region.
-        
-        # what is encoder 
-        self.source_encoder = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(PIXELS, 128),
-            nn.GELU(),
-            nn.Linear(128, 36),
-        )
-
-        # Local PC predictor: neighborhood prediction plus source drive.
-        self.pc_local = nn.Conv2d(
+        # Generative PC predictors, top-down:
+        #   W0: z1 -> z0=x      with sigmoid output for MNIST pixels
+        #   W1: z2 -> z1        with tanh hidden prediction
+        # PC learning updates these parameters manually from local errors, so
+        # they are deliberately excluded from autograd optimizers.
+        self.pc_to_image = nn.Conv2d(
             1,
             1,
             kernel_size=3,
@@ -300,6 +297,22 @@ class FluidPCN(nn.Module):
             padding_mode="circular",
             bias=True,
         )
+        self.pc_to_density = nn.Conv2d(
+            cfg.z2_channels,
+            1,
+            kernel_size=3,
+            padding=1,
+            padding_mode="circular",
+            bias=True,
+        )
+        with torch.no_grad():
+            nn.init.normal_(self.pc_to_image.weight, mean=0.0, std=0.02)
+            nn.init.zeros_(self.pc_to_image.bias)
+            nn.init.normal_(self.pc_to_density.weight, mean=0.0, std=0.02)
+            nn.init.zeros_(self.pc_to_density.bias)
+        for module in (self.pc_to_image, self.pc_to_density):
+            for param in module.parameters():
+                param.requires_grad_(False)
 
         # Value-like cost-to-go map.  During training it learns the distance map
         # to the task-relevant class region.  This is a practical finite-grid
@@ -335,53 +348,53 @@ class FluidPCN(nn.Module):
     def random_density(self, x: torch.Tensor) -> torch.Tensor:
         """Random central unit-mass hidden state, independent of image content."""
 
-        # x is used only for batch/device/dtype/shape; no pixel values seed a.
+        # x is used only for batch/device/dtype/shape; no pixel values seed z1.
         raw = (torch.rand_like(x) + EPS) * self.source_mask
         return normalize_density(raw)
 
-    # concentrate the mass in the center with the actual image dimention
-    def source_density(self, x: torch.Tensor) -> torch.Tensor:
-        batch = x.shape[0]
-        # why EPS here - incase exact zero happend during image learning and reduction to the size 1 by 36
-        source_values = F.softplus(self.source_encoder(x)) + EPS
-        # creating source with dimention of [batch, 1, 28, 28]
-        source = torch.zeros(batch, 1, IMG, IMG, device=x.device, dtype=x.dtype)
-        source_size = 6
-        y0 = IMG // 2 - source_size // 2
-        x0 = IMG // 2 - source_size // 2
-        # fitting the learned and reduced dimention to the whole image size
-        # the dimention of the image or source is [batch, 1, 28, 28]
-        # part of this dimention specifically [batch, 1, 11:17, 11:17] will be filed by the compressed image value of 1 by 36 value
-        source[:, :, y0 : y0 + source_size, x0 : x0 + source_size] = source_values.view(
-            batch, 1, source_size, source_size
-        )
-        # 
-        return normalize_density(source)
+    def random_top_latent(self, x: torch.Tensor) -> torch.Tensor:
+        """Small random z2 latent, independent of image content."""
 
-    def pc_prediction(self, a: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """A valid density prediction based on local neighbors and source drive."""
-        
-        local_logits = self.pc_local(a)
-        # source will be the same for every inference step
-        source = self.source_density(x)
-        positive = F.softplus(local_logits) + EPS
-        return normalize_density(positive)
+        return 0.01 * torch.randn(
+            x.shape[0],
+            self.cfg.z2_channels,
+            IMG,
+            IMG,
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+    def pc_predictions(self, z1: torch.Tensor, z2: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Top-down generative predictions: z2 -> z1 -> z0.
+
+        Final equations:
+          r0 = W0 * z1 + b0,  mu0 = sigmoid(r0)
+          r1 = W1 * z2 + b1,  mu1 = tanh(r1)
+        x is intentionally absent here; it is only the clamped target z0 used
+        later when computing eps0.
+        """
+
+        r0 = self.pc_to_image(z1)
+        mu0 = torch.sigmoid(r0)
+        r1 = self.pc_to_density(z2)
+        mu1 = torch.tanh(r1)
+        return {"r0": r0, "mu0": mu0, "r1": r1, "mu1": mu1}
 
     def value_map(self, x: torch.Tensor) -> torch.Tensor:
         raw = self.value_encoder(x).view(-1, 1, IMG, IMG)
         return torch.sigmoid(raw)
 
-# learned feature might respond to:
-    # high density + decreasing value toward the right.
+    # learned feature might respond to:
+        # high density + decreasing value toward the right.
 
-# Another might respond to:
-    # image stroke + density edge.
+    # Another might respond to:
+        # image stroke + density edge.
 
-# Another might respond to:
-    # density sitting in a high-cost area.
+    # Another might respond to:
+        # density sitting in a high-cost area.
 
-# We cannot say exactly what they learn without inspecting trained weights/activations, 
-# but mathematically that's what they're able to represent.
+    # We cannot say exactly what they learn without inspecting trained weights/activations,
+    # but mathematically that's what they're able to represent.
 
     def velocity(
         self,
@@ -414,6 +427,219 @@ class FluidPCN(nn.Module):
 
 
 # -----------------------------------------------------------------------------
+# Local generative-PC operators
+# -----------------------------------------------------------------------------
+
+
+def sigmoid_prime_from_mu(mu: torch.Tensor) -> torch.Tensor:
+    return mu * (1.0 - mu)
+
+
+def tanh_prime_from_mu(mu: torch.Tensor) -> torch.Tensor:
+    return 1.0 - mu.square()
+
+
+def pc_errors(
+    x: torch.Tensor,
+    z1: torch.Tensor,
+    predictions: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """README convention: eps_k = target - prediction."""
+
+    return {
+        "eps0": x - predictions["mu0"],
+        "eps1": z1 - predictions["mu1"],
+    }
+
+
+def pc_error_derivatives(
+    errors: Dict[str, torch.Tensor],
+    predictions: Dict[str, torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Local child error times that layer's activation derivative."""
+
+    d0 = errors["eps0"] * sigmoid_prime_from_mu(predictions["mu0"])
+    d1 = errors["eps1"] * tanh_prime_from_mu(predictions["mu1"])
+    return d0, d1
+
+
+def circular_conv2d(
+    parent: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    pad_h = weight.shape[-2] // 2
+    pad_w = weight.shape[-1] // 2
+    padded = F.pad(parent, (pad_w, pad_w, pad_h, pad_h), mode="circular")
+    return F.conv2d(padded, weight, bias=bias, stride=1, padding=0)
+
+
+def circular_conv_transpose_local(delta: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """Adjoint of the same-padding circular Conv2d used by the PC predictors."""
+
+    pad_h = weight.shape[-2] // 2
+    pad_w = weight.shape[-1] // 2
+    flipped = torch.flip(weight, dims=(-2, -1)).transpose(0, 1)
+    padded = F.pad(delta, (pad_w, pad_w, pad_h, pad_h), mode="circular")
+    return F.conv2d(padded, flipped, bias=None, stride=1, padding=0)
+
+
+def project_physical_density(z1: torch.Tensor) -> torch.Tensor:
+    """Constrain z1 to the fluid solver's nonnegative unit-mass density.
+
+    This projection is an added physical constraint on top of the ordinary PC
+    latent update.  It is used inside no-grad inference and is not a learned
+    autograd operation.
+    """
+
+    return normalize_density(z1)
+
+
+def clip_latent_delta(delta: torch.Tensor, max_abs: float) -> torch.Tensor:
+    if max_abs <= 0.0:
+        return delta
+    return delta.clamp(min=-max_abs, max=max_abs)
+
+
+def pc_latent_updates(
+    model: FluidPCN,
+    x: torch.Tensor,
+    z1: torch.Tensor,
+    z2: torch.Tensor,
+    cfg: Config,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """One local PC reaction step with fixed weights.
+
+    Implemented equations:
+      eps0 = x - mu0
+      eps1 = z1 - mu1
+      delta_z1 = transpose(W0, eps0 * sigmoid_prime(r0)) - eps1
+      delta_z2 = transpose(W1, eps1 * tanh_prime(r1))
+    """
+
+    predictions = model.pc_predictions(z1, z2)
+    errors = pc_errors(x, z1, predictions)
+    d0, d1 = pc_error_derivatives(errors, predictions)
+
+    bottom_up_0 = circular_conv_transpose_local(d0, model.pc_to_image.weight)
+    bottom_up_1 = circular_conv_transpose_local(d1, model.pc_to_density.weight)
+    delta_z1 = clip_latent_delta(bottom_up_0 - errors["eps1"], cfg.pc_latent_clip)
+    delta_z2 = clip_latent_delta(bottom_up_1, cfg.pc_latent_clip)
+
+    z1 = project_physical_density(z1 + cfg.hidden_lr * delta_z1)
+    z2 = z2 + cfg.hidden_lr * delta_z2
+    return z1, z2
+
+
+def pc_diagnostics_from_errors(errors: Dict[str, torch.Tensor]) -> Dict[str, float]:
+    pc_recon_loss = 0.5 * errors["eps0"].square().mean()
+    pc_hidden_loss = 0.5 * errors["eps1"].square().mean()
+    return {
+        "pc_recon_loss": pc_recon_loss.item(),
+        "pc_hidden_loss": pc_hidden_loss.item(),
+        "pc_energy": (pc_recon_loss + pc_hidden_loss).item(),
+    }
+
+
+def pc_state_diagnostics(
+    model: FluidPCN,
+    x: torch.Tensor,
+    z1: torch.Tensor,
+    z2: torch.Tensor,
+) -> Dict[str, float]:
+    predictions = model.pc_predictions(z1, z2)
+    errors = pc_errors(x, z1, predictions)
+    return pc_diagnostics_from_errors(errors)
+
+
+def conv_local_weight_grads(
+    parent: torch.Tensor,
+    child_delta: torch.Tensor,
+    weight_shape: torch.Size,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Local convolutional correlation: parent patches times child error."""
+
+    kernel_h, kernel_w = weight_shape[-2], weight_shape[-1]
+    pad_h, pad_w = kernel_h // 2, kernel_w // 2
+    padded = F.pad(parent, (pad_w, pad_w, pad_h, pad_h), mode="circular")
+    patches = F.unfold(padded, kernel_size=(kernel_h, kernel_w))
+    delta_flat = child_delta.flatten(2)
+    batch = float(parent.shape[0])
+
+    grad_w = torch.einsum("bol,bil->oi", delta_flat, patches) / batch
+    grad_w = grad_w.view(weight_shape)
+    grad_b = delta_flat.sum(dim=(0, 2)) / batch
+    return grad_w, grad_b
+
+
+@torch.no_grad()
+def pc_local_weight_updates(
+    model: FluidPCN,
+    x: torch.Tensor,
+    z1: torch.Tensor,
+    z2: torch.Tensor,
+    cfg: Config,
+) -> Dict[str, float]:
+    """Manual local PC learning; no backward/autograd is used here.
+
+    Implemented equations:
+      dW0 = correlation(z1, eps0 * sigmoid_prime(r0)) / batch_size
+      dW1 = correlation(z2, eps1 * tanh_prime(r1)) / batch_size
+      Wk += pc_lr * (dWk - pc_weight_decay * Wk)
+      bk += pc_lr * dbk
+    """
+
+    predictions = model.pc_predictions(z1, z2)
+    errors = pc_errors(x, z1, predictions)
+    d0, d1 = pc_error_derivatives(errors, predictions)
+
+    dW0, db0 = conv_local_weight_grads(z1, d0, model.pc_to_image.weight.shape)
+    dW1, db1 = conv_local_weight_grads(z2, d1, model.pc_to_density.weight.shape)
+
+    model.pc_to_image.weight.add_(cfg.pc_lr * (dW0 - cfg.pc_weight_decay * model.pc_to_image.weight))
+    model.pc_to_image.bias.add_(cfg.pc_lr * db0)
+    model.pc_to_density.weight.add_(cfg.pc_lr * (dW1 - cfg.pc_weight_decay * model.pc_to_density.weight))
+    model.pc_to_density.bias.add_(cfg.pc_lr * db1)
+
+    diagnostics = pc_diagnostics_from_errors(errors)
+    diagnostics.update(
+        {
+            "pc_dW0_norm": dW0.norm().item(),
+            "pc_dW1_norm": dW1.norm().item(),
+        }
+    )
+    return diagnostics
+
+
+def validate_manual_pc_gradients(device: torch.device, dtype: torch.dtype = torch.float32) -> None:
+    """Tiny isolated autograd check for the manual local conv update.
+
+    Autograd is used only in this smoke-test helper to verify that the explicit
+    local correlation equals the negative gradient of 0.5||target - mu||^2.
+    Actual PC inference and PC parameter learning never call autograd.
+    """
+
+    parent = torch.randn(2, 2, 5, 5, device=device, dtype=dtype)
+    target = torch.rand(2, 3, 5, 5, device=device, dtype=dtype)
+    weight = (0.02 * torch.randn(3, 2, 3, 3, device=device, dtype=dtype)).requires_grad_()
+    bias = torch.zeros(3, device=device, dtype=dtype, requires_grad=True)
+
+    r = circular_conv2d(parent, weight, bias)
+    mu = torch.sigmoid(r)
+    eps = target - mu
+    d = eps * sigmoid_prime_from_mu(mu)
+    manual_w, manual_b = conv_local_weight_grads(parent, d, weight.shape)
+
+    loss = 0.5 * eps.square().sum() / parent.shape[0]
+    loss.backward()
+
+    if not torch.allclose(manual_w, -weight.grad, rtol=1e-4, atol=1e-5):
+        raise AssertionError("manual PC convolution weight gradient does not match autograd check")
+    if not torch.allclose(manual_b, -bias.grad, rtol=1e-4, atol=1e-5):
+        raise AssertionError("manual PC convolution bias gradient does not match autograd check")
+
+
+# -----------------------------------------------------------------------------
 # PC inference and local post-inference learning
 # -----------------------------------------------------------------------------
 
@@ -424,11 +650,12 @@ def infer_density(
     x: torch.Tensor,
     cfg: Config,
     steps: int | None = None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """Run PC reaction + learned incompressible advection without BPTT."""
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+    """Run local PC inference for z1/z2 plus learned incompressible advection."""
 
     total_steps = cfg.infer_steps if steps is None else steps
-    a = model.random_density(x)
+    z1 = model.random_density(x)
+    z2 = model.random_top_latent(x)
     value = model.value_map(x)
 
     max_mass_error = 0.0
@@ -437,33 +664,32 @@ def infer_density(
     mean_cfl = 0.0
 
     for step in range(total_steps):
-        # Reaction: minimize 1/(2N)||a-a_hat||^2, then restore unit budget.
-        a_hat = model.pc_prediction(a, x)
-        grad_pc = cfg.pc_reaction_weight * (a - a_hat) / PIXELS
-        a = normalize_density(a - cfg.hidden_lr * grad_pc)
+        z1, z2 = pc_latent_updates(model, x, z1, z2, cfg)
+        min_density = min(min_density, z1.min().item())
 
         if cfg.disable_flow:
             continue
 
-        u = model.velocity(a, x, value)
-        mass_before = a.sum(dim=(1, 2, 3))
-        a = transport_step(a, u, step, total_steps, cfg)
-        mass_after = a.sum(dim=(1, 2, 3))
+        u = model.velocity(z1, x, value)
+        mass_before = z1.sum(dim=(1, 2, 3))
+        z1 = transport_step(z1, u, step, total_steps, cfg)
+        mass_after = z1.sum(dim=(1, 2, 3))
 
         mass_error = (mass_after - mass_before).abs().max().item()
         max_mass_error = max(max_mass_error, mass_error)
-        min_density = min(min_density, a.min().item())
+        min_density = min(min_density, z1.min().item())
         mean_divergence += divergence(u).square().mean().sqrt().item()
         mean_cfl += cfl_number(u, cfg.dt).mean().item()
 
     denom = max(total_steps, 1)
     diagnostics = {
         "mass_error": max_mass_error,
-        "min_density": min_density if min_density != float("inf") else a.min().item(),
+        "min_density": min_density if min_density != float("inf") else z1.min().item(),
         "divergence_rms": mean_divergence / denom,
         "cfl": mean_cfl / denom,
+        **pc_state_diagnostics(model, x, z1, z2),
     }
-    return a, diagnostics
+    return z1, z2, diagnostics
 
 
 def train_batch(
@@ -478,19 +704,14 @@ def train_batch(
 
     # Fixed-point inference is detached: no backpropagation through the long
     # reaction/advection chain.
-    a_star, inference_diag = infer_density(model, x, cfg)
-    a_fixed = a_star.detach()
+    z1_star, z2_star, inference_diag = infer_density(model, x, cfg)
+    z1_fixed = z1_star.detach()
+    z2_fixed = z2_star.detach()
 
     # ------------------------------------------------------------------
-    # 1. Local PC parameter update
+    # 1. Local generative-PC parameter update
     # ------------------------------------------------------------------
-    optimizers["pc"].zero_grad(set_to_none=True)
-    a_hat = model.pc_prediction(a_fixed, x)
-    pc_per_sample = 0.5 * (a_fixed - a_hat).square().sum(dim=(1, 2, 3)) / PIXELS
-    pc_loss = pc_per_sample.mean()
-    weighted_pc_loss = cfg.pc_weight * pc_loss
-    weighted_pc_loss.backward()
-    optimizers["pc"].step()
+    pc_diag = pc_local_weight_updates(model, x, z1_fixed, z2_fixed, cfg)
 
     # ------------------------------------------------------------------
     # 2. Value-like cost-to-go update
@@ -508,7 +729,7 @@ def train_batch(
     # ------------------------------------------------------------------
     optimizers["flow"].zero_grad(set_to_none=True)
     value_for_flow = model.value_map(x).detach()
-    a_roll = a_fixed
+    a_roll = z1_fixed
 
     shape_terms = []
     control_terms = []
@@ -552,14 +773,22 @@ def train_batch(
         torch.nn.utils.clip_grad_norm_(model.stream_controller.parameters(), max_norm=5.0)
         optimizers["flow"].step()
 
-    total_energy = weighted_pc_loss + weighted_value_loss + flow_loss
+    total_energy = (
+        cfg.pc_weight * pc_diag["pc_energy"]
+        + weighted_value_loss.item()
+        + flow_loss.item()
+    )
 
     pred = logits.argmax(dim=1)
     acc = (pred == y).float().mean().item() * 100.0
 
     return {
-        "energy": total_energy.item(),
-        "pc": pc_loss.item(),
+        "energy": total_energy,
+        "pc_recon_loss": pc_diag["pc_recon_loss"],
+        "pc_hidden_loss": pc_diag["pc_hidden_loss"],
+        "pc_energy": pc_diag["pc_energy"],
+        "pc_dW0_norm": pc_diag["pc_dW0_norm"],
+        "pc_dW1_norm": pc_diag["pc_dW1_norm"],
         "value": value_loss.item(),
         "ce": class_loss.item(),
         "shape": shape_loss.item(),
@@ -576,14 +805,22 @@ def evaluate(model: FluidPCN, loader: DataLoader, cfg: Config) -> Tuple[float, D
     model.eval()
     total_correct = 0
     total_seen = 0
-    diag_sum = {"mass_error": 0.0, "min_density": 0.0, "divergence_rms": 0.0, "cfl": 0.0}
+    diag_sum = {
+        "mass_error": 0.0,
+        "min_density": 0.0,
+        "divergence_rms": 0.0,
+        "cfl": 0.0,
+        "pc_recon_loss": 0.0,
+        "pc_hidden_loss": 0.0,
+        "pc_energy": 0.0,
+    }
     batches = 0
 
     for images, labels in loader:
         x = images.to(DEVICE)
         y = labels.to(DEVICE)
-        a, diag = infer_density(model, x, cfg)
-        logits = model.region_logits(a)
+        z1, _z2, diag = infer_density(model, x, cfg)
+        logits = model.region_logits(z1)
         pred = logits.argmax(dim=1)
 
         total_correct += (pred == y).sum().item()
@@ -617,10 +854,6 @@ def make_loader(train: bool, subset: int, batch_size: int) -> DataLoader:
 
 def make_optimizers(model: FluidPCN, cfg: Config) -> Dict[str, torch.optim.Optimizer]:
     return {
-        "pc": torch.optim.Adam(
-            list(model.source_encoder.parameters()) + list(model.pc_local.parameters()),
-            lr=cfg.pc_lr,
-        ),
         "value": torch.optim.Adam(model.value_encoder.parameters(), lr=cfg.value_lr),
         "flow": torch.optim.Adam(model.stream_controller.parameters(), lr=cfg.flow_lr),
     }
@@ -631,6 +864,7 @@ def smoke_test(cfg: Config) -> None:
     smoke_cfg = Config(**{**cfg.__dict__, "infer_steps": min(cfg.infer_steps, 3), "control_horizon": min(cfg.control_horizon, 2)})
     model = FluidPCN(smoke_cfg).to(DEVICE)
     optimizers = make_optimizers(model, smoke_cfg)
+    validate_manual_pc_gradients(DEVICE)
 
     x = torch.rand(8, 1, IMG, IMG)
     y = torch.randint(0, NUM_CLASSES, (8,))
@@ -638,23 +872,28 @@ def smoke_test(cfg: Config) -> None:
 
     model.eval()
     with torch.no_grad():
-        a, diag = infer_density(model, x.to(DEVICE), smoke_cfg, steps=3)
-        logits = model.region_logits(a)
+        z1, z2, diag = infer_density(model, x.to(DEVICE), smoke_cfg, steps=3)
+        logits = model.region_logits(z1)
 
-    assert a.shape == (8, 1, IMG, IMG)
+    assert z1.shape == (8, 1, IMG, IMG)
+    assert z2.shape == (8, smoke_cfg.z2_channels, IMG, IMG)
     assert logits.shape == (8, NUM_CLASSES)
-    assert torch.isfinite(a).all()
+    assert torch.isfinite(z1).all()
+    assert torch.isfinite(z2).all()
     assert torch.isfinite(logits).all()
-    assert abs(a.sum(dim=(1, 2, 3)).mean().item() - 1.0) < 1e-4
+    assert z1.min().item() >= -1e-7
+    assert torch.allclose(z1.sum(dim=(1, 2, 3)), torch.ones(8, device=z1.device), atol=1e-4)
     assert diag["mass_error"] < 1e-4
     assert diag["divergence_rms"] < 1e-4
 
     print("smoke test passed")
+    print("manual PC gradient check passed")
     print(
         " ".join(
             [
                 f"energy={metrics['energy']:.4f}",
-                f"pc={metrics['pc']:.6f}",
+                f"pc_recon={metrics['pc_recon_loss']:.6f}",
+                f"pc_hidden={metrics['pc_hidden_loss']:.6f}",
                 f"value={metrics['value']:.4f}",
                 f"ce={metrics['ce']:.4f}",
                 f"shape={metrics['shape']:.4f}",
@@ -677,7 +916,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train_subset", type=int, default=40000)
     p.add_argument("--test_subset", type=int, default=10000)
     p.add_argument("--infer_steps", type=int, default=20)
-    p.add_argument("--hidden_lr", type=float, default=40.0)
+    p.add_argument("--hidden_lr", type=float, default=0.01)
+    p.add_argument("--z2_channels", type=int, default=8)
+    p.add_argument("--pc_weight_decay", type=float, default=1e-4)
+    p.add_argument("--pc_latent_clip", type=float, default=1.0)
     p.add_argument("--control_horizon", type=int, default=5)
     p.add_argument("--dt", type=float, default=0.5)
     p.add_argument("--target_cfl", type=float, default=0.35)
@@ -704,6 +946,9 @@ def config_from_args(args: argparse.Namespace) -> Config:
         test_subset=args.test_subset,
         infer_steps=args.infer_steps,
         hidden_lr=args.hidden_lr,
+        z2_channels=args.z2_channels,
+        pc_weight_decay=args.pc_weight_decay,
+        pc_latent_clip=args.pc_latent_clip,
         control_horizon=args.control_horizon,
         dt=args.dt,
         target_cfl=args.target_cfl,
@@ -728,7 +973,8 @@ def main() -> None:
     print("Paper-aligned discriminative Fluid-PCN routing experiment")
     print(f"device={DEVICE}")
     print(
-        f"infer_steps={cfg.infer_steps} control_horizon={cfg.control_horizon} "
+        f"infer_steps={cfg.infer_steps} z2_channels={cfg.z2_channels} "
+        f"control_horizon={cfg.control_horizon} "
         f"target_cfl={cfg.target_cfl} diffusion_start={cfg.diffusion_start} "
         f"flow={'off' if cfg.disable_flow else 'on'}"
     )
@@ -750,7 +996,8 @@ def main() -> None:
             if batch_idx % 20 == 0:
                 print(
                     f"epoch={epoch} batch={batch_idx:03d} "
-                    f"E={metrics['energy']:.4f} pc={metrics['pc']:.6f} "
+                    f"E={metrics['energy']:.4f} "
+                    f"pc0={metrics['pc_recon_loss']:.6f} pc1={metrics['pc_hidden_loss']:.6f} "
                     f"V={metrics['value']:.4f} ce={metrics['ce']:.4f} "
                     f"shape={metrics['shape']:.4f} acc={metrics['acc']:.1f}% "
                     f"mass_err={metrics['mass_error']:.1e} "
@@ -762,6 +1009,7 @@ def main() -> None:
         print("=" * 90)
         print(
             f"epoch={epoch} test_acc={test_acc:.2f}% best={best_test:.2f}% "
+            f"pc0={diag['pc_recon_loss']:.6f} pc1={diag['pc_hidden_loss']:.6f} "
             f"mass_err={diag['mass_error']:.2e} div={diag['divergence_rms']:.2e} "
             f"cfl={diag['cfl']:.3f}"
         )
