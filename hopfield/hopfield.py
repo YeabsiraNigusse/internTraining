@@ -28,10 +28,10 @@ class Hopfield:
 
 rng = np.random.default_rng(0)
 n = 100
-patterns = rng.choice([-1, 1], size=(3, n))
+patterns = rng.choice([-1, 1], size=(3, n)) # so why are the numbers -1, 0 and 1
 
 net = Hopfield(n)
-net.train(patterns)
+net.train(patterns) # what exactlly are we training here
 
 noisy = patterns[0].copy()
 flip = rng.choice(n, size=15, replace=False)   # corrupt 15% of the bits
@@ -42,4 +42,4 @@ print("energy before:", net.energy(noisy))
 print("energy after: ", net.energy(out))
 print("recovered correctly:", np.array_equal(out, patterns[0]))
 
-
+# pattern recognition, complition and noise reduction
