@@ -59,5 +59,5 @@ out_m = np.sign(modern.recall(noisy))
 print("modern correct:   ", np.array_equal(out_m, patterns[0]))
 
 
-
+# i might need explanation on softmax and its probability defination
 
