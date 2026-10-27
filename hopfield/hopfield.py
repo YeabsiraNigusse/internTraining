@@ -28,7 +28,9 @@ class Hopfield:
 
 rng = np.random.default_rng(0)
 n = 100
-patterns = rng.choice([-1, 1], size=(3, n)) # so why are the numbers -1, 0 and 1
+patterns = rng.choice([-1, 1], size=(3, n)) 
+
+# so why are the numbers -1, 0 and 1
 
 net = Hopfield(n)
 net.train(patterns) # what exactlly are we training here
