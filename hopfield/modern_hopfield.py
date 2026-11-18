@@ -42,21 +42,21 @@ print(net.energy(x), net.energy(net.recall(x)))
 
 # --- Capacity test: classical vs modern ---
 rng = np.random.default_rng(0)
-n, P_count = 100, 50                  # 50 patterns, far beyond classical limit (~14)
+n, P_count = 54000, 784                  # 50 patterns, far beyond classical limit (~14)
 patterns = rng.choice([-1, 1], size=(P_count, n))
 
-noisy = patterns[0].copy()
+noisy = patterns[783].copy()
 noisy[rng.choice(n, size=20, replace=False)] *= -1   # flip 20% of the bits
 
 classical = Hopfield(n)               # your class from before
 classical.train(patterns)
 out_c = classical.recall(noisy)
-print("classical correct:", np.array_equal(out_c, patterns[0]))
+print("classical correct:", np.array_equal(out_c, patterns[783]))
 
-modern = ModernHopfield(beta=1.0)
-modern.store(patterns)
-out_m = np.sign(modern.recall(noisy))
-print("modern correct:   ", np.array_equal(out_m, patterns[0]))
+# modern = ModernHopfield(beta=1.0)
+# modern.store(patterns)
+# out_m = np.sign(modern.recall(noisy))
+# print("modern correct:   ", np.array_equal(out_m, patterns[783]))
 
 
 # i might need explanation on softmax and its probability defination
